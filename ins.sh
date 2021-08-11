@@ -4,6 +4,9 @@ nct=0
 workdir=$(pwd)
 bt="ExtOS-respin Installer"
 tt="Installing progres"
+distrose="Choose based distribution by selecting then press Space\n\n${bold}BASED ON       ARCH        VERSION/RELEASE TYPE        INIT"
+bold=$(tput bold)
+normal=$(tput sgr0)
 netcheck () {
     if [ $net -eq 0 ]; then
         clear
@@ -66,8 +69,24 @@ disksel () {
     fi
 }
 ossel () {
-    dialog --backtitle "$bt" --title "$tt" --menu 0 0 0 1 "Arch-based" 2 "Ubuntu-based"
-    echo lol
+    osbs=$(dialog --backtitle "$bt" --title "$tt" --stdout --menu "Choose based distro" 0 0 0 1 "Arch-based" 2 "Debian/Ubuntu-based")
+    if [ $osbs -eq 1 ]; then
+        ostp=1
+        pac
+    elif [ $osbs -eq 2 ]; then
+        ostp=2
+        deb
+    else
+        diskchoose
+    fi
+}
+deb () {
+    debdist=$(dialog --backtitle "$bt" --title "$tt" --stdout --radiolist "$distrose" 0 0 0 1 "Ubuntu     amd64 (x86_64)       20.04 lts         systemd" on)
+    echo $debdist >> ./out
+}
+pac () {
+    pacdist=$(dialog --backtitle "$bt" --title "$tt" --stdout --radiolist "$distrose" 0 0 0 1 "Arch Linux     amd64 (x86_64)      rolling     systemd" on)
+    echo $pacdist >> ./out
 }
 netinit () {
     if wget -q --spider http://archlinux.org; then
@@ -89,7 +108,8 @@ netinit () {
 }
 if dialog --backtitle "$bt" --title "$tt" --yesno "This is ExtOS linux respin v0.1\nMade by Shadichy\n\nStart installation process?" 0 0
 then
-    netinit
+#    netinit
+    ossel
 else
     clear
     printf "Run ./install.sh to restart the installer"
