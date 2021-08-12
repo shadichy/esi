@@ -16,9 +16,6 @@ netinit () {
         net=2
         nct=0
         netdone="*"
-        if [ ! -d ~/esi ] && [ ! -d ./esi ] && [ ! -d ../esi ]; then
-            git clone https://github.com/shadichy/esi.git
-        fi
     else
         if [ $nct -eq 1 ]; then
             if dialog --backtitle "$bt" --title "$tt" --yesno "Continue without network?" 0 0 ; then
@@ -27,6 +24,20 @@ netinit () {
         fi
         netmes="\e[1;31mYou'll need to configure the network before installing or else some packages will be broken"
         netcheck
+    fi
+}
+dircheck() {
+    if [ $net -eq  2 ]; then
+        if [ -d ~/esi ]; then
+            cd ~/esi
+        elif [ -d ./esi ]; then
+            cd ./esi
+        elif [ -d ../esi ]; then
+            cd ../esi
+        else
+            git clone https://github.com/shadichy/esi.git
+            cd ./esi
+        fi
     fi
 }
 netcheck() {
@@ -56,7 +67,7 @@ netcheck() {
 }
 keymapc() {
     while true; do
-        KEYMAP=$(dialog --title "Set the Keyboard Layout" --nocancel --default-item "us" --menu "Select a keymap that corresponds to your keyboard layout. Choose 'other' if your keymap is not listed. If you are unsure, the default is 'us' (United States/QWERTY).\n\nKeymap:" 22 57 10 \
+        KEYMAP=$(dialog --title "Set the Keyboard Layout" --nocancel --default-item "us" --menu "Select a keymap that corresponds to your keyboard layout. Choose 'other' if your keymap is not listed. If you are unsure, the default is 'us' (United States/QWERTY).\n\nKeymap:" 0 0 0 \
             "br-abnt2" "Brazilian Portuguese" \
             "cf" "Canadian-French" \
             "colemak" "Colemak (US)" \
@@ -81,7 +92,7 @@ keymapc() {
             for map in $(localectl list-keymaps); do
                 keymaps+=("$map" "")
             done
-            KEYMAP=$(dialog --title "Set the Keyboard Layout" --cancel-label "Back" --menu "Select a keymap that corresponds to your keyboard layout. The default is 'us' (United States/QWERTY)." 30 60 25 "${keymaps[@]}" 3>&1 1>&2 2>&3)
+            KEYMAP=$(dialog --title "Set the Keyboard Layout" --cancel-label "Back" --menu "Select a keymap that corresponds to your keyboard layout. The default is 'us' (United States/QWERTY)." 0 0 0 "${keymaps[@]}" 3>&1 1>&2 2>&3)
             if [ $? -eq 0 ]; then
                 break
             fi
@@ -89,14 +100,13 @@ keymapc() {
             break
         fi
     done
-    dialog --infobox "Setting keymap to $KEYMAP..." 3 50
     localectl set-keymap "$KEYMAP"
     loadkeys "$KEYMAP"
     keydone="*"
 }
 localec() {
     while true; do
-        LOCALE=$(dialog --title "Set the System Locale" --nocancel --default-item "en_US.UTF-8" --menu "Select a locale that corresponds to your language and region. The locale you select will define the language used by the system and other region specific information. Choose 'other' if your language and/or region is not listed. If you are unsure, the default is 'en_US.UTF-8'.\n\nLocale:" 30 65 16 \
+        LOCALE=$(dialog --title "Set the System Locale" --nocancel --default-item "en_US.UTF-8" --menu "Select a locale that corresponds to your language and region. The locale you select will define the language used by the system and other region specific information. Choose 'other' if your language and/or region is not listed. If you are unsure, the default is 'en_US.UTF-8'.\n\nLocale:" 0 0 0 \
             "en_AU.UTF-8" "English (Australia)" \
             "en_CA.UTF-8" "English (Canada)" \
             "en_US.UTF-8" "English (United States)" \
@@ -119,7 +129,7 @@ localec() {
             while read -r line; do
                 locales+=("$line" "")
             done < <(grep -E "^#?[a-z].*UTF-8" /etc/locale.gen | sed -e 's/#//' -e 's/\s.*$//')
-            LOCALE=$(dialog --title "Set the System Locale" --cancel-label "Back" --menu "Select a locale that corresponds to your language and region. The locale you select will define the language used by the system and other region specific information. If you are unsure, the default is 'en_US.UTF-8'.\n\nLocale:" 30 65 16 "${locales[@]}" 3>&1 1>&2 2>&3)
+            LOCALE=$(dialog --title "Set the System Locale" --cancel-label "Back" --menu "Select a locale that corresponds to your language and region. The locale you select will define the language used by the system and other region specific information. If you are unsure, the default is 'en_US.UTF-8'.\n\nLocale:" 0 0 0 "${locales[@]}" 3>&1 1>&2 2>&3)
             if [ $? -eq 0 ]; then
                 break
             fi
@@ -138,20 +148,20 @@ localtz() {
     regions+=("other" "")
 
     while true; do
-        ZONE=$(dialog --title "Set the Time Zone" --nocancel --menu "Select your time zone.\nIf your region is not listed, select 'other'.\n\nTime zone:" 27 50 17 "${regions[@]}" 3>&1 1>&2 2>&3)
+        ZONE=$(dialog --title "Set the Time Zone" --nocancel --menu "Select your time zone.\nIf your region is not listed, select 'other'.\n\nTime zone:" 0 0 0 "${regions[@]}" 3>&1 1>&2 2>&3)
         if [ "$ZONE" != "other" ]; then
             zone_regions=()
             for zone_region in $(find /usr/share/zoneinfo/"${ZONE}" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort); do
                 zone_regions+=("$zone_region" "")
             done
-            SUBZONE=$(dialog --title "Set the Time Zone" --cancel-label "Back" --menu "Select your time zone.\n\nTime zone:" 27 50 17 "${zone_regions[@]}" 3>&1 1>&2 2>&3)
+            SUBZONE=$(dialog --title "Set the Time Zone" --cancel-label "Back" --menu "Select your time zone.\n\nTime zone:" 0 0 0 "${zone_regions[@]}" 3>&1 1>&2 2>&3)
             if [ $? -eq 0 ]; then
                 if [ -d /usr/share/zoneinfo/"${ZONE}/${SUBZONE}" ]; then
                     subzone_regions=()
                     for subzone_region in $(find /usr/share/zoneinfo/"${ZONE}/${SUBZONE}" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort); do
                         subzone_regions+=("$subzone_region" "")
                     done
-                    SUBZONE_SUBREGION=$(dialog --title "Set the Time Zone" --cancel-label "Back" --menu "Select your time zone.\n\nTime zone:" 27 50 17 "${subzone_regions[@]}" 3>&1 1>&2 2>&3)
+                    SUBZONE_SUBREGION=$(dialog --title "Set the Time Zone" --cancel-label "Back" --menu "Select your time zone.\n\nTime zone:" 0 0 0 "${subzone_regions[@]}" 3>&1 1>&2 2>&3)
                     if [ $? -eq 0 ]; then
                         ZONE="${ZONE}/${SUBZONE}/${SUBZONE_SUBREGION}"
                         break
@@ -165,24 +175,77 @@ localtz() {
             for other_region in $(find /usr/share/zoneinfo -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | grep -E -v '/$|iso3166.tab|leapseconds|posixrules|tzdata.zi|zone.tab|zone1970.tab' | sort); do
                 other_regions+=("$other_region" "")
             done
-            ZONE=$(dialog --title "Set the Time Zone" --cancel-label "Back" --menu "Select your time zone.\n\nTime zone:" 27 50 17 "${other_regions[@]}" 3>&1 1>&2 2>&3)
+            ZONE=$(dialog --title "Set the Time Zone" --cancel-label "Back" --menu "Select your time zone.\n\nTime zone:" 0 0 0 "${other_regions[@]}" 3>&1 1>&2 2>&3)
             if [ $? -eq 0 ]; then
                 ZONE="${ZONE}"
                 break
             fi
         fi
     done
-    dialog --title "Set the Hardware Clock" --nocancel --yesno "Would you like to set the hardware clock from the system clock using UTC time?\nIf you select no, local time will be used instead.\n\nIf you are unsure, UTC time is the default." 8 85
+    dialog --title "Set the Hardware Clock" --nocancel --yesno "Would you like to set the hardware clock from the system clock using UTC time?\nIf you select no, local time will be used instead.\n\nIf you are unsure, UTC time is the default." 0 0
     if [ $? -ne 0 ]; then
         utc_enabled=false
     fi
     tzcdone="*"
 }
+usrname() {
+    usrtt="User Configurations"
+    while true; do
+        FULL_NAME=$(dialog --title "$usrtt" --nocancel --inputbox "The installer will create a user account for you. This is the main user account that you will login to and use for non-administrative activities.\n\nPlease enter the real name for this user. This information will be used for any program that uses the user's real name such as email. Entering your full name here is recommended; however, it may be left blank.\n\nFull name for the new user:" 0 0 3>&1 1>&2 2>&3)
+        while true; do
+            USER_NAME=$(dialog --title "$usrtt" --cancel-label "Back" --inputbox "Please enter a username for the new account.\n\nThe username should start with a lower-case letter, which can be followed by any combination of numbers, more lower-case letters, or the dash symbol, and must not be match with any reserved system usernames (See: https://salsa.debian.org/installer-team/user-setup/raw/master/reserved-usernames).\n\nUsername for your account:" 0 0 3>&1 1>&2 2>&3)
+            if [ $? -eq 0 ]; then
+                if printf "%s" "$USER_NAME" | grep -Eoq "^[a-z][a-z0-9-]*$" && [ "${#USER_NAME}" -lt 33 ]; then
+                    if grep -Fxq "$USER_NAME" "./reserved_usernames"; then
+                        dialog --title "$usrtt" --msgbox "ERROR: The username you entered ($USER_NAME) is reserved for use by the system. Please select a different one." 0 0
+                    else 
+                        usrpswd_match=false
+                        while ! $usrpswd_match; do
+                            input=$(dialog --title "$usrtt" --clear --stdout --nocancel --insecure --passwordbox "Create a password for '$USER_NAME':" 0 0)
+                            confirm_input=$(dialog --title "$usrtt" --clear --stdout --insecure --passwordbox "Re-enter password to verify:" 0 0)
+                            if [ -z "$input" ]; then
+                                dialog --title "$usrtt" --msgbox "ERROR: You are not allowed to have an empty password." 0 0
+                            elif [ "$input" != "$confirm_input" ]; then
+                                dialog --title "$usrtt" --msgbox "ERROR: The two passwords you entered did not match." 0 0
+                            else
+                                user_passwd="$input"
+                                usrpswd_match=true
+                            fi
+                        done
+                        break
+                    fi
+                else
+                    dialog --title "$usrtt" --msgbox "ERROR: You entered an invalid username.\n\nThe username must start with a lower-case letter, which can be followed by any combination of numbers, more lower-case letters, or the dash symbol, must be no more than 32 characters long, and must not be match with any reserved system usernames (See: https://salsa.debian.org/installer-team/user-setup/raw/master/reserved-usernames)." 0 0
+                fi
+            fi
+        done
+        supswd_match=false
+        while ! $supswd_match; do
+            input=$(dialog --title "$usrtt" --clear --stdout --nocancel --insecure --passwordbox "Please set a password for 'root' (root is the Super User, the Administaion of the system, who grants permissions for you to do system jobs).\n\nRoot password:" 0 0)
+            confirm_input=$(dialog --title "$usrtt" --clear --stdout --insecure --passwordbox "Re-enter password to verify:" 0 0)
+            if [ -z "$input" ]; then
+                dialog --title "$usrtt" --msgbox "ERROR: You are not allowed to have an empty password." 0 0
+            elif [ "$input" != "$confirm_input" ]; then
+                dialog --title "$usrtt" --msgbox "ERROR: The two passwords you entered did not match." 0 0
+            else
+                root_passwd="$input"
+                supswd_match=true
+            fi
+        done
+        HOST_NAME=$(dialog --title "$usrtt" --nocancel --inputbox "Please enter the hostname for this system.\n\nThe hostname is a single word that identifies your system to the network.\n\nHostname:" 0 0 "ExtOS" 3>&1 1>&2 2>&3)
+        if printf "%s" "$HOST_NAME" | grep -Eoq "^[a-zA-Z0-9-]{1,63}$" && [ "${HOST_NAME:0:1}" != "-" ] && [ "${HOST_NAME: -1}" != "-" ]; then
+            break
+        else
+            dialog --title "$usrtt" --msgbox "ERROR: You entered an invalid hostname.\n\nA valid hostname may contain only the numbers 0-9, upper and lowercase letters (A-Z and a-z), and the minus sign. It must be at most 63 characters long, and may not begin or end with a minus sign." 0 0
+        fi
+    done
+    usrdone="*"
+}
 diskchoose() {
-    disk=$(dialog --backtitle "$bt" --title "$tt" --stdout --cancel-label "Back" --menu "Disk/partition options" 0 0 0 1 "Open partition editor tool" 2 "Select disk and install")
+    disk=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Exit to Menu" --menu "Disk/partition options" 0 0 0 1 "Open partition editor tool" 2 "Select disk and install")
     if [ $disk -eq 1 ]; then
         clear
-        printf "Use 'fdisk' or 'parted' commands to edit the disks/partitions\n"
+        printf "Use 'fdisk', 'cfdisk', 'parted' commands or any CLI-based disk utilities to edit the disks/partitions\n"
         printf "\n"
         printf "Type 'exit' to continue\n"
         printf "\n"
@@ -210,6 +273,7 @@ disksel() {
         sleep 3
         disksel
     fi
+    pttdone="*"
 }
 ossel() {
     osbs=$(dialog --backtitle "$bt" --title "$tt" --stdout --cancel-label "Back" --menu "Choose based distro" 0 0 0 1 "Arch-based" 2 "Debian/Ubuntu-based")
@@ -245,16 +309,16 @@ menusel() {
     while true; do
     choice=$(dialog --title "Main Menu" --nocancel \
         --menu "Select an option below using the UP/DOWN, PLUS(+) or MINUS(-) keys and SPACE or ENTER. \
-         \n  JOBS         DESCRIBE                             Done" 19 70 11 \
-            "NETWORK    " "Manually config the network           $netdone   " \
-            "KEYMAP     " "Set the keyboard layout               $keydone   " \
-            "LOCALE     " "Set the system locale                 $locdone   " \
-            "TIMEZONE   " "Set the system time zone              $tzcdone   " \
-            "CREATE USER" "Create your user account              $usrdone   " \
-            "PARTITION  " "Partition the installation drive      $pttdone   " \
-            "INSTALL    " "Install ExtOS Linux respin                       " \
-            "REBOOT     " "Reboot system                                    " \
-            "EXIT       " "Exit the installer                               " \
+         \n  JOBS         DESCRIBE                             Done" 0 0 0 \
+            "NETWORK    " "Manually config the network           $netdone" \
+            "KEYMAP     " "Set the keyboard layout               $keydone" \
+            "LOCALE     " "Set the system locale                 $locdone" \
+            "TIMEZONE   " "Set the system time zone              $tzcdone" \
+            "CREATE USER" "Create your user account              $usrdone" \
+            "PARTITION  " "Partition the installation drive      $pttdone" \
+            "INSTALL    " "Install ExtOS Linux respin" \
+            "POWER      " "Power options" \
+            "EXIT       " "Exit the installer" \
             3>&1 1>&2 2>&3)
         case "$choice" in
             "NETWORK    ") netmes="\e[0mFrom here you'll configure the network manually"; netcheck ;;
@@ -264,21 +328,24 @@ menusel() {
             "CREATE USER") usrname ;;
             "PARTITION  ") diskchoose ;;
             "INSTALL    ") ossel ;;
-            "REBOOT     ") systemctl reboot ;;
+            "POWER      ") systemctl reboot ;;
             *) reset ; exit ;;
         esac
     done
 }
 main() {
     netinit
+    dircheck
     keymapc
+    localec
     localtz
+    usrname
     diskchoose
     ossel
 }
 if dialog --backtitle "$bt" --title "$tt" --yesno "This is ExtOS linux respin v0.1\nMade by Shadichy\n\nStart installation process?" 0 0
 then
-    main
+#    main
     menusel
 else
     clear
