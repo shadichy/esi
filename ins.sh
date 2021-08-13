@@ -267,22 +267,12 @@ disksel() {
         device_size=$(lsblk -n -r -o SIZE "$device")
         block_devices+=("$device" "$device_size")
     done
-    disktarget=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --menu "Select the disk for ExtOS to be installed on. Note that the disk you select will be erased, but not until you have confirmed the changes.\n\nSelect the disk in the list below:" 0 0 0 "${block_devices[@]}")
-    clear
-    fdisk -l
-    printf "\nex: Type in '/dev/sda', '/dev/hdb2', 'xvda1', vdc3', 'nvme0n3p2',... ('full path and name' or 'name only', no brackets), or whatever nvme, disk, sdcard, virtual mem or specify any partions exist in the list above\n\n"
-    read -p "Choose disk/partition to install: " diskmnt
-    if [ -b "/dev/$diskmnt" ]; then
-        disktaget="/dev/$diskmnt"
-    elif [ -b $diskmnt ]; then
-        disktaget=$diskmnt
-    elif [ $diskmnt == "exit" ] || [ $diskmnt == "quit" ] || [ $diskmnt == "q" ]; then
-        diskchoose
-    elif [ -b "/dev/$diskmnt" ] || [ ! -b $diskmnt ]; then
-        printf "Invalid disk/partition path/name"
-        sleep 3
-        disksel
-    fi
+    while true; do
+        devdisk=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --menu "Select the disk for ExtOS to be installed on. Note that the disk you select will be erased, but not until you have confirmed the changes.\n\nSelect the disk in the list below:" 0 0 0 "${block_devices[@]}")
+        if dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --yesno "Warning: All data on $devdisk will be erased\nContinue?" 0 0 ; then
+            echo $devdisk
+        fi
+    done
     pttdone="*"
 }
 ossel() {
