@@ -242,6 +242,7 @@ usrname() {
     usrdone="*"
 }
 diskchoose() {
+    diskconfirm=0
     while true; do
         disk=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Exit to Menu" --menu "Disk/partition options" 0 0 0 \
             "Auto" "Automatically choosing disk and partition to install (alongside other operating systems)" \
@@ -249,15 +250,18 @@ diskchoose() {
             "DIY " "Manually layout the disks and partitions")
         case "$disk" in
             "Auto") ;;
-            "Basic") disksel; break ;;
+            "Basic") disksel
+                if [ $diskconfirm -eq 1 ]; then
+                    break
+                fi ;;
             "DIY ") clear
-                    printf "Use 'fdisk', 'cfdisk', 'parted' commands or any CLI-based disk utilities to edit the disks/partitions\n"
-                    printf "\n"
-                    printf "Type 'exit' after you have done all the jobs\n"
-                    printf "\n"
-                    $SHELL
-                    disksel
-                    break ;;
+                printf "Use 'fdisk', 'cfdisk', 'parted' commands or any CLI-based disk utilities to edit the disks/partitions\n"
+                printf "\n"
+                printf "Type 'exit' after you have done all the jobs\n"
+                printf "\n"
+                $SHELL
+                disksel
+                break ;;
             *) menusel ;;
         esac
     done
@@ -269,8 +273,14 @@ disksel() {
     done
     while true; do
         devdisk=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --menu "Select the disk for ExtOS to be installed on. Note that the disk you select will be erased, but not until you have confirmed the changes.\n\nSelect the disk in the list below:" 0 0 0 "${block_devices[@]}")
-        if dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --yesno "Warning: All data on $devdisk will be erased\nContinue?" 0 0 ; then
-            echo $devdisk
+        if [ $? -eq 0 ]; then
+            if dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --yesno "Warning: All data on $(lsblk -d -n -r -o TYPE $devdisk) $devdisk will be erased\n\nContinue?" 0 0 ; then
+                diskconfirm=1
+                break
+            fi
+        else
+            unset block_devices
+            break
         fi
     done
     pttdone="*"
@@ -300,10 +310,23 @@ pac() {
         1 "Arch Linux      amd64/x86_64    rolling         systemd" on \
         2 "Artix(Arch)     amd64/x86_64    rolling         openrc " off \
         3 "Artix(Arch)     amd64/x86_64    rolling         runit  " off \
-        3 "Arch Linux 32   i386/i686/x86   rolling         systemd" off \
-        3 "Parabola(Arch)  i386/i686/x86   rolling-xtended openrc " off \
-        3 "Obarun(Arch)    i386/i686/x86   rolling-xtended s6/66  " off )
+        4 "Arch Linux 32   i386/i686/x86   rolling         systemd" off \
+        5 "Parabola(Arch)  i386/i686/x86   rolling-xtended openrc " off \
+        6 "Obarun(Arch)    i386/i686/x86   rolling-xtended s6/66  " off )
     echo $pacdist >> ./out
+}
+poweropts() {
+    pwvar=$(dialog --backtitle "$bt" --title "Power options" --cancel-label "Back" --stdout --menu "Choose option to continue:" 0 0 0 \
+        "Reboot   " "Restart the machine and also the installer" \
+        "Sleep    " "Suspend the machine and save current state to RAM/swap" \
+        "Hibernate" "Hibernate the machine and save current state to disk/RAMdisk" \
+        "Shutdown " "Exit the installer and power off the  machine")
+    case $pwvar in
+        "Reboot   ") systemctl reboot ;;
+        "Sleep    ") systemctl suspend;;
+        "Hibernate") systemctl hibernate;;
+        "Shutdown ") systemctl poweroff;;
+    esac
 }
 menusel() {
     while true; do
@@ -327,7 +350,7 @@ menusel() {
             "CREATE USER") usrname ;;
             "PARTITION  ") diskchoose ;;
             "INSTALL    ") ossel ;;
-            "POWER      ") systemctl reboot ;;
+            "POWER      ") poweropts ;;
             *) reset ; exit ;;
         esac
     done
