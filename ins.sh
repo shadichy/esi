@@ -370,8 +370,25 @@ then
 #    main
     menusel
 else
-    clear
+#    clear
     printf "Run ./install.sh to restart the installer\n"
+    star="*       "
+    fs=
+    for dev in $(lsblk -n -p -r -e 7,11 -o NAME); do
+        devsz=$(lsblk -n -r -o SIZE "$dev")
+        case $(lsblk -n -o TYPE $dev) in
+            "part") devfs=$(lsblk -n -r -o FSTYPE "$dev") ;;
+            *) devfs=$(lsblk -n -o TYPE $dev) ;;
+        esac
+        while [ ${#devsz} -lt 16 ]; do
+            devsz+=" "
+        done
+        while [ ${#devfs} -lt 16 ]; do
+            devfs+=" "
+        done
+        devs+=("$dev" "$devsz$devfs$star")
+    done
+    echo "${devs[@]}"
     exit
 fi
 echo "let's continue"
