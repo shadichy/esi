@@ -234,20 +234,19 @@ usrname() {
         done
         HOST_NAME=$(dialog --backtitle "$bt" --title "$usrtt" --nocancel --inputbox "Please enter the hostname for this system.\n\nThe hostname is a single word that identifies your system to the network.\n\nHostname:" 0 0 "ExtOS" 3>&1 1>&2 2>&3)
         if printf "%s" "$HOST_NAME" | grep -Eoq "^[a-zA-Z0-9-]{1,63}$" && [ "${HOST_NAME:0:1}" != "-" ] && [ "${HOST_NAME: -1}" != "-" ]; then
+            usrdone="*"
             break
         else
             dialog --backtitle "$bt" --title "$usrtt" --msgbox "ERROR: You entered an invalid hostname.\n\nA valid hostname may contain only the numbers 0-9, upper and lowercase letters (A-Z and a-z), and the minus sign. It must be at most 63 characters long, and may not begin or end with a minus sign." 0 0
         fi
     done
-    usrdone="*"
 }
 diskchoose() {
     diskconfirm=0
     while true; do
         disk=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Exit to Menu" --menu "Disk/partition options" 0 0 0 \
             "Auto" "Automatically choosing disk and partition to install (alongside other operating systems)" \
-            "Basic" "Choose (a) disk/partition(s) to install" \
-            "DIY " "Manually layout the disks and partitions")
+            "Manual" "Set up/Select (a) disk/partition(s) to install")
         case "$disk" in
             "Auto") ;;
             "Basic") disksel
@@ -267,23 +266,51 @@ diskchoose() {
     done
 }
 disksel() {
-    for device in $(lsblk -n -p -r -e 7,11 -o NAME); do
-        device_size=$(lsblk -n -r -o SIZE "$device")
-        block_devices+=("$device" "$device_size")
+    for dev in $(lsblk -n -p -r -e 7,11 -o NAME); do
+        devsz=$(lsblk -d -n -r -o SIZE "$dev")
+        devfs="$(lsblk -d -n -r -o FSTYPE "$dev") $(lsblk -d -n -o TYPE $dev)"
+        while [ ${#dev} -lt 16 ]; do
+            dev+=" "
+        done
+        while [ ${#devsz} -lt 10 ]; do
+            devsz+=" "
+        done
+        while [ ${#devfs} -lt 12 ]; do
+            devfs+=" "
+        done
+        devs+=("$dev" "$devsz$devfs")
     done
     while true; do
-        devdisk=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --menu "Select the disk for ExtOS to be installed on. Note that the disk you select will be erased, but not until you have confirmed the changes.\n\nSelect the disk in the list below:" 0 0 0 "${block_devices[@]}")
-        if [ $? -eq 0 ]; then
-            if dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --yesno "Warning: All data on $(lsblk -d -n -r -o TYPE $devdisk) $devdisk will be erased\n\nContinue?" 0 0 ; then
-                diskconfirm=1
-                break
-            fi
-        else
-            unset block_devices
+        if [ ${#devs[@]} -eq 0 ]; then
+            dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "No device is available to install" 0 0
             break
         fi
+        devdisk=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --ok-label "Select" --extra-button --extra-label "Next" --stdout --menu "Select the disk for ExtOS to be installed on. Note that the disk you select will be erased, but not until you have confirmed the changes.\n\nSelect the disk in the list below:" 0 0 0 "${devs[@]}")
+        case $? in
+            0)
+                devtype=$(lsblk -d -n -r -o TYPE $devdisk)
+                dorp=""
+                if [ $(lsblk -d -n -o TYPE $dev) == disk ]; then
+                    dorp="Partition table: "
+                fi
+                while true; do
+                    mntopts=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "${devtype^^} $devdisk\n    Type: $devtype\n    Size: $(lsblk -d -n -r -o SIZE $devdisk)\n    Flag(s): \n    In use: none\n\nChoose an action:" 0 0 0 1 "Use as " 2 "Format" 3 "Erase" 4 "Manage flags")
+                done
+                if dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --yesno "Warning: All data on ${devtype^} $devdisk will be erased\n\nContinue?" 0 0 ; then
+                    pttdone="*"
+                fi
+                ;;
+            3)
+                diskconfirm=1
+                echo lol
+                break
+                ;;
+            *)
+                unset devs
+                break
+                ;;
+        esac
     done
-    pttdone="*"
 }
 ossel() {
     osbs=$(dialog --backtitle "$bt" --title "$tt" --stdout --cancel-label "Back" --menu "Choose based distro" 0 0 0 1 "Arch-based" 2 "Debian/Ubuntu-based")
@@ -368,27 +395,26 @@ main() {
 if dialog --backtitle "$bt" --title "$tt" --yesno "This is ExtOS linux respin v0.1\nMade by Shadichy\n\nStart installation process?" 0 0
 then
 #    main
-    menusel
+#    diskchoose
+#    menusel
+    disksel
 else
 #    clear
     printf "Run ./install.sh to restart the installer\n"
     star="*       "
-    fs=
     for dev in $(lsblk -n -p -r -e 7,11 -o NAME); do
-        devsz=$(lsblk -n -r -o SIZE "$dev")
-        case $(lsblk -n -o TYPE $dev) in
-            "part") devfs=$(lsblk -n -r -o FSTYPE "$dev") ;;
-            *) devfs=$(lsblk -n -o TYPE $dev) ;;
-        esac
-        while [ ${#devsz} -lt 16 ]; do
+        devsz=$(lsblk -d -n -r -o SIZE "$dev")
+        devfs="$(lsblk -d -n -r -o FSTYPE "$dev") $(lsblk -d -n -o TYPE $dev)"
+        while [ ${#devsz} -lt 8 ]; do
             devsz+=" "
         done
-        while [ ${#devfs} -lt 16 ]; do
+        while [ ${#devfs} -lt 8 ]; do
             devfs+=" "
         done
-        devs+=("$dev" "$devsz$devfs$star")
+        devs+=("$dev" "$devsz$devfs")
     done
-    echo "${devs[@]}"
+    clear
+    echo "${devs[@]}" >> ./out
     exit
 fi
 echo "let's continue"
