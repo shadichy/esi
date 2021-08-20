@@ -246,14 +246,15 @@ diskchoose() {
     while true; do
         disk=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Exit to Menu" --menu "Disk/partition options" 0 0 0 \
             "Auto" "Automatically choosing disk and partition to install (alongside other operating systems)" \
-            "Manual" "Set up/Select (a) disk/partition(s) to install")
+            "Basic" "Select (a) disk/partition(s) to install" \
+            "Manual" "Customize disk/partition layout")
         case "$disk" in
             "Auto") ;;
             "Basic") disksel
                 if [ $diskconfirm -eq 1 ]; then
                     break
                 fi ;;
-            "DIY ") clear
+            "Manual") clear
                 printf "Use 'fdisk', 'cfdisk', 'parted' commands or any CLI-based disk utilities to edit the disks/partitions\n"
                 printf "\n"
                 printf "Type 'exit' after you have done all the jobs\n"
@@ -289,12 +290,15 @@ disksel() {
         case $? in
             0)
                 devtype=$(lsblk -d -n -r -o TYPE $devdisk)
-                dorp=""
-                if [ $(lsblk -d -n -o TYPE $dev) == disk ]; then
-                    dorp="Partition table: "
+                if [ $devtype == disk ]; then
+                    dorpa="Partition table: "
+                    dorpb=" entire disk"
+                else
+                    dorpa="Filesystem: $(lsblk -d -n -r -o FSTYPE $dev)"
+                    dorpb=""
                 fi
                 while true; do
-                    mntopts=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "${devtype^^} $devdisk\n    Type: $devtype\n    Size: $(lsblk -d -n -r -o SIZE $devdisk)\n    Flag(s): \n    In use: none\n\nChoose an action:" 0 0 0 1 "Use as " 2 "Format" 3 "Erase" 4 "Manage flags")
+                    mntopts=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "${devtype^^} $devdisk\n    Type: $devtype\n    $dorpa\n    Size: $(lsblk -d -n -r -o SIZE $devdisk)\n    In use: none\n\nChoose an action:" 0 0 0 1 "Use$dorpb as " 2 "Format")
                 done
                 if dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --yesno "Warning: All data on ${devtype^} $devdisk will be erased\n\nContinue?" 0 0 ; then
                     pttdone="*"
