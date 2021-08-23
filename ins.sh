@@ -11,7 +11,8 @@ tzcdone=""
 usrdone=""
 pttdone=""
 distrose="Choose based distribution by selecting then press Space\n\n         BASED ON        ARCH            VERSION         INIT"
-netinit () {
+mntlst=("")
+netinit() {
     if nc -zw1 archlinux.org 80 || wget -q --spider http://archlinux.org; then
         net=2
         nct=0
@@ -261,7 +262,9 @@ diskchoose() {
                 printf "\n"
                 $SHELL
                 disksel
-                break ;;
+                if [ $diskconfirm -eq 1 ]; then
+                    break
+                fi ;;
             *) menusel ;;
         esac
     done
@@ -291,18 +294,46 @@ disksel() {
             0)
                 devtype=$(lsblk -d -n -r -o TYPE $devdisk)
                 if [ $devtype == disk ]; then
-                    dorpa="Partition table: "
+                    dorpa="Partition table: $(fdisk -l $devdisk | grep Disklabel | awk '{print $3}')"
                     dorpb=" entire disk"
                 else
-                    dorpa="Filesystem: $(lsblk -d -n -r -o FSTYPE $dev)"
+                    dorpa="Filesystem: $(lsblk -d -n -r -o FSTYPE $devdisk)"
                     dorpb=""
                 fi
                 while true; do
                     mntopts=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "${devtype^^} $devdisk\n    Type: $devtype\n    $dorpa\n    Size: $(lsblk -d -n -r -o SIZE $devdisk)\n    In use: none\n\nChoose an action:" 0 0 0 1 "Use$dorpb as " 2 "Format")
+                    if [ $? -eq 0 ]; then
+                        while true; do
+                            mntpt=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Choose mountpoint for $devtype $devdisk:\n\nNote: everything except "/" and "/boot" are optional" 0 0 0 \
+                            "/" "This is where the base system will be installed" \
+                            "/boot" "Needed for booting in UEFI/LVM(bios/mbr)/encryption" \
+                            "/home" "Userspace data will be saved here" \
+                            "/usr" "App data will be stored here" \
+                            "/etc" "App Configurations will be stored here" \
+                            "/root" "Userspace data for root/admin will be stored here" \
+                            "/var" "Stores app data, must be mounted as read-write" \
+                            "swap" "Virtual memory partition" )
+                            if [ $? -eq 0 ]; then
+                                if dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --yesno "Warning: All data on ${devtype^} $devdisk will be erased\n\nContinue?" 0 0 ; then
+                                    mntlst=("${mntlst[@]}" "$devdisk $mntpt")
+                                    if [ ! -z $(printf '%s\n' "${mntlst[@]}" | grep "/" | awk '{print $2}') ]; then
+                                        pttdone="*"
+                                    else
+                                        pttdone=""
+                                    fi
+                                    break
+                                else
+                                    break
+                                fi
+                            else
+                                break
+                            fi
+                        done
+                        break
+                    else
+                        break
+                    fi
                 done
-                if dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --yesno "Warning: All data on ${devtype^} $devdisk will be erased\n\nContinue?" 0 0 ; then
-                    pttdone="*"
-                fi
                 ;;
             3)
                 diskconfirm=1
@@ -400,8 +431,8 @@ if dialog --backtitle "$bt" --title "$tt" --yesno "This is ExtOS linux respin v0
 then
 #    main
 #    diskchoose
-#    menusel
-    disksel
+    menusel
+#    disksel
 else
 #    clear
     printf "Run ./install.sh to restart the installer\n"
