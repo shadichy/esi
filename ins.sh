@@ -306,7 +306,7 @@ disksel() {
                         while true; do
                             mntpt=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Choose mountpoint for $devtype $devdisk:\n\nNote: everything except "/" and "/boot" are optional" 0 0 0 \
                             "/" "This is where the base system will be installed" \
-                            "/boot" "Needed for booting in UEFI/LVM(bios/mbr)/encryption" \
+                            "/boot" "Needed for UEFI/LVM(bios/mbr)/encryption" \
                             "/home" "Userspace data will be saved here" \
                             "/usr" "App data will be stored here" \
                             "/etc" "App Configurations will be stored here" \
@@ -315,7 +315,18 @@ disksel() {
                             "swap" "Virtual memory partition" )
                             if [ $? -eq 0 ]; then
                                 if dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --yesno "Warning: All data on ${devtype^} $devdisk will be erased\n\nContinue?" 0 0 ; then
-                                    mntlst=("${mntlst[@]}" "$devdisk $mntpt")
+                                    cryptpass=""
+                                    if [ $devtype == crypt ]; then
+                                        while true; do
+                                            cryptpass=$(dialog --backtitle "$bt" --title "Partition the harddrive" --nocancel --inputbox "$devdisk appears to be an encrypted partition\nIt must be unlocked in order to continue\n\nPlease enter the encryption passphrase:" 0 0 3>&1 1>&2 2>&3)
+                                            if [ $? -eq 0 ]; then
+                                                break
+                                            else
+                                                dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the encryption passphrase!"
+                                            fi
+                                        done
+                                    fi
+                                    mntlst=("${mntlst[@]}" "$devdisk $mntpt $cryptpass")
                                     if [ ! -z $(printf '%s\n' "${mntlst[@]}" | grep "/" | awk '{print $2}') ]; then
                                         pttdone="*"
                                     else
