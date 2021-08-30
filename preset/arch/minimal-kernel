@@ -1,0 +1,5 @@
+mkinitcpio
+linux-lts419
+grub
+intel-ucode
+amd-ucode
