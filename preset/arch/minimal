@@ -33,8 +33,6 @@ pulseaudio-alsa
 pavucontrol
 openrc
 elogind-openrc
-intel-ucode
-amd-ucode
 mc
 zip
 unzip
