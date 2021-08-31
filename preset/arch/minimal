@@ -49,3 +49,4 @@ xorg-xdpyinfo
 xorg-xkill
 xorg-xprop
 xorg-xwininfo
+xf86-input-libinput
