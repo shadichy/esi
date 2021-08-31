@@ -38,5 +38,14 @@ zip
 unzip
 w3m
 xterm
-xorg-server
-xorg-apps
+xorg-server-common
+xf86-video-vesa
+xf86-input-evdev
+xorg-xinit
+xorg-setxkbmap
+xorg-xrandr
+xorg-xev
+xorg-xdpyinfo
+xorg-xkill
+xorg-xprop
+xorg-xwininfo
