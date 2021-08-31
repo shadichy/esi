@@ -67,5 +67,5 @@
    ##### Create menu entry
    `Ai rảnh mà làm`
    ##### Use GRUB shell
-   Simply just run all `Create menu entry` command part without `menuentry {}` wrapper
+   Simply just run all `Create menu entry` commands without `menuentry {}` wrapper
   ### Second step: Để viết sau
