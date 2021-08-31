@@ -36,7 +36,7 @@
    * Intergrated in the live iso
    * Contains only necessary softwares
    * Minimum storage requires 2GB
-   * Simple theme, [jwm](https://joewing.net/projects/jwm/) as the window manager
+   * Simple theme, [jwm](https://joewing.net/projects/jwm/) as window manager
    * No graphic cards support, must be manually choose and install
    * Static release
    * Uses Squashfs filesystem
