@@ -2,7 +2,6 @@
 
 ## Introduction
 	Welcome to the officical github page of ExtOS System Installer project.
-
   ### About the OS
   
   The Extreme OS (formerly called ExtOS) is maintained by Shadichy. The os is aimed to bring minimal, portable but fast, funcional and customizable experience to the end-users. The os is minimal enough to be installed on a sd card within 4G of storage and plugged to any machine that match the requirements.
