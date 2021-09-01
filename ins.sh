@@ -3,7 +3,6 @@ net=0
 nct=0
 workdir=$(pwd)
 bt="ExtOS-respin Installer"
-tt="Installing progres"
 netdone=""
 keydone=""
 locdone=""
@@ -12,7 +11,20 @@ usrdone=""
 pttdone=""
 distrose="Choose based distribution by selecting then press Space\n\n         BASED ON        ARCH            VERSION         INIT"
 mntlst=("")
-netinit() {
+lm=0
+
+init() {
+    case $(lscpu | grep Arch | awk '{print $2}') in
+        "x86_64") lm=1; break;;
+        "x86") lm=0; break;;
+        *) dialog --backtitle "$bt" --title "$tt" --msgbox "Your cpu is not supported, please install on another computer"
+        exit 1 ;;
+    esac
+    if [ -d /sys/firmware/efi ]; then
+        cmos="efi" 
+    else
+        cmos=""
+    fi
     if nc -zw1 archlinux.org 80 || wget -q --spider http://archlinux.org; then
         net=2
         nct=0
@@ -194,7 +206,7 @@ usrname() {
     while true; do
         FULL_NAME=$(dialog --backtitle "$bt" --title "$usrtt" --nocancel --inputbox "The installer will create a user account for you. This is the main user account that you will login to and use for non-administrative activities.\n\nPlease enter the real name for this user. This information will be used for any program that uses the user's real name such as email. Entering your full name here is recommended; however, it may be left blank.\n\nFull name for the new user:" 0 0 3>&1 1>&2 2>&3)
         while true; do
-            USER_NAME=$(dialog --backtitle "$bt" --title "$usrtt" --cancel-label "Back" --inputbox "Please enter a username for the new account.\n\nThe username should start with a lower-case letter, which can be followed by any combination of numbers, more lower-case letters, or the dash symbol, and must not be match with any reserved system usernames (See: https://salsa.debian.org/installer-team/user-setup/raw/master/reserved-usernames).\n\nUsername for your account:" 0 0 3>&1 1>&2 2>&3)
+            USER_NAME=$(dialog --backtitle "$bt" --title "$usrtt" --cancel-label "Back" --inputbox "Please enter a username for the new account.\n\nThe username should start with a lower-case letter, which can be followed by any combination of numbers, more lower-case letters, or the dash symbol, and must not be match with any reserved system usernames (See: https://salsa.debian.org/installer-team/user-setup/raw/master/reserved-usernames).\n\nUsername for your account:" 0 0 "user" 3>&1 1>&2 2>&3)
             if [ $? -eq 0 ]; then
                 if printf "%s" "$USER_NAME" | grep -Eoq "^[a-z][a-z0-9-]*$" && [ "${#USER_NAME}" -lt 33 ]; then
                     if grep -Fxq "$USER_NAME" "./reserved_usernames"; then
@@ -202,8 +214,12 @@ usrname() {
                     else 
                         usrpswd_match=false
                         while ! $usrpswd_match; do
-                            input=$(dialog --backtitle "$bt" --title "$usrtt" --clear --stdout --nocancel --insecure --passwordbox "Create a password for '$USER_NAME':" 0 0)
-                            confirm_input=$(dialog --backtitle "$bt" --title "$usrtt" --clear --stdout --insecure --passwordbox "Re-enter password to verify:" 0 0)
+                            input=$(dialog --backtitle "$bt" --title "$usrtt" --clear --stdout --nocancel --insecure --passwordbox "Note: the default password of '$USER_NAME' is '123456'\n\nCreate a new password for '$USER_NAME':" 0 0 "123456")
+                            if [ $input == 123456 ]; then
+                                confirm_input=123456
+                            else
+                                confirm_input=$(dialog --backtitle "$bt" --title "$usrtt" --clear --stdout --insecure --passwordbox "Re-enter password to verify:" 0 0)
+                            fi
                             if [ -z "$input" ]; then
                                 dialog --backtitle "$bt" --title "$usrtt" --msgbox "ERROR: You are not allowed to have an empty password." 0 0
                             elif [ "$input" != "$confirm_input" ]; then
@@ -222,8 +238,12 @@ usrname() {
         done
         supswd_match=false
         while ! $supswd_match; do
-            input=$(dialog --backtitle "$bt" --title "$usrtt" --clear --stdout --nocancel --insecure --passwordbox "Please set a password for 'root' (root is the Super User, the Administaion of the system, who grants permissions for you to do system jobs).\n\nRoot password:" 0 0)
-            confirm_input=$(dialog --backtitle "$bt" --title "$usrtt" --clear --stdout --insecure --passwordbox "Re-enter password to verify:" 0 0)
+            input=$(dialog --backtitle "$bt" --title "$usrtt" --clear --stdout --nocancel --insecure --passwordbox "Please set a password for 'root' (root is the Super User, the Administaion of the system, who grants permissions for you to do system jobs).\nThe default is 'root'\n\nRoot password:" 0 0 "root")
+            if [ $input == root ]; then
+                confirm_input=root
+            else
+                confirm_input=$(dialog --backtitle "$bt" --title "$usrtt" --clear --stdout --insecure --passwordbox "Re-enter password to verify:" 0 0)
+            fi
             if [ -z "$input" ]; then
                 dialog --backtitle "$bt" --title "$usrtt" --msgbox "ERROR: You are not allowed to have an empty password." 0 0
             elif [ "$input" != "$confirm_input" ]; then
@@ -241,6 +261,19 @@ usrname() {
             dialog --backtitle "$bt" --title "$usrtt" --msgbox "ERROR: You entered an invalid hostname.\n\nA valid hostname may contain only the numbers 0-9, upper and lowercase letters (A-Z and a-z), and the minus sign. It must be at most 63 characters long, and may not begin or end with a minus sign." 0 0
         fi
     done
+}
+mntck() {
+    for dir in $(ls -A /mnt); do
+        if mountpoint -q $dir; then
+            umount -R $dir
+        fi
+    done
+    if mountpoint -q /mnt; then
+        umount -R /mnt
+    fi
+    if free | awk '/^Swap:/ {exit !$2}'; then
+        swapoff -a
+    fi
 }
 diskchoose() {
     diskconfirm=0
@@ -284,6 +317,7 @@ disksel() {
         done
         devs+=("$dev" "$devsz$devfs")
     done
+    mntck
     while true; do
         if [ ${#devs[@]} -eq 0 ]; then
             dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "No device is available to install" 0 0
@@ -303,43 +337,51 @@ disksel() {
                 while true; do
                     mntopts=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "${devtype^^} $devdisk\n    Type: $devtype\n    $dorpa\n    Size: $(lsblk -d -n -r -o SIZE $devdisk)\n    In use: none\n\nChoose an action:" 0 0 0 1 "Use$dorpb as " 2 "Format")
                     if [ $? -eq 0 ]; then
-                        while true; do
-                            mntpt=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Choose mountpoint for $devtype $devdisk:\n\nNote: everything except "/" and "/boot" are optional" 0 0 0 \
-                            "/" "This is where the base system will be installed" \
-                            "/boot" "Needed for UEFI/LVM(bios/mbr)/encryption" \
-                            "/home" "Userspace data will be saved here" \
-                            "/usr" "App data will be stored here" \
-                            "/etc" "App Configurations will be stored here" \
-                            "/root" "Userspace data for root/admin will be stored here" \
-                            "/var" "Stores app data, must be mounted as read-write" \
-                            "swap" "Virtual memory partition" )
-                            if [ $? -eq 0 ]; then
-                                if dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --yesno "Warning: All data on ${devtype^} $devdisk will be erased\n\nContinue?" 0 0 ; then
-                                    cryptpass=""
-                                    if [ $devtype == crypt ]; then
-                                        while true; do
-                                            cryptpass=$(dialog --backtitle "$bt" --title "Partition the harddrive" --nocancel --inputbox "$devdisk appears to be an encrypted partition\nIt must be unlocked in order to continue\n\nPlease enter the encryption passphrase:" 0 0 3>&1 1>&2 2>&3)
-                                            if [ $? -eq 0 ]; then
-                                                break
-                                            else
-                                                dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the encryption passphrase!"
-                                            fi
-                                        done
-                                    fi
-                                    mntlst=("${mntlst[@]}" "$devdisk $mntpt $cryptpass")
-                                    if [ ! -z $(printf '%s\n' "${mntlst[@]}" | grep "/" | awk '{print $2}') ]; then
-                                        pttdone="*"
+                        case $mntopts in
+                            1) while true; do
+                                mntpt=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Choose mountpoint for $devtype $devdisk:\n\nNote: everything except "/" and "/boot" are optional" 0 0 0 \
+                                "/" "This is where the base system will be installed" \
+                                "/boot" "Needed for UEFI/LVM(bios/mbr)/encryption" \
+                                "/home" "Userspace data will be saved here" \
+                                "/usr" "App data will be stored here" \
+                                "/etc" "App Configurations will be stored here" \
+                                "/root" "Userspace data for root/admin will be stored here" \
+                                "/var" "Stores app data, must be mounted as read-write" \
+                                "swap" "Virtual memory partition" )
+                                if [ $? -eq 0 ]; then
+                                    if dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --yesno "Warning: All data on ${devtype^} $devdisk will be erased\n\nContinue?" 0 0 ; then
+                                        cryptpass=""
+                                        if [ $devtype == crypt ]; then
+                                            while true; do
+                                                cryptpass=$(dialog --backtitle "$bt" --title "Partition the harddrive" --nocancel --inputbox "$devdisk appears to be an encrypted partition\nIt must be unlocked in order to continue\n\nPlease enter the encryption passphrase:" 0 0 3>&1 1>&2 2>&3)
+                                                if [ $? -eq 0 ]; then
+                                                    break
+                                                else
+                                                    dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the encryption passphrase!"
+                                                fi
+                                            done
+                                        fi
+                                        mntlst+=("$devdisk $mntpt $cryptpass")
+                                        if [ ! -z $(printf '%s\n' "${mntlst[@]}" | grep "/" | awk '{print $2}') ]; then
+                                            pttdone="*"
+                                        else
+                                            pttdone=""
+                                        fi
+                                        break
                                     else
-                                        pttdone=""
+                                        break
                                     fi
-                                    break
                                 else
                                     break
                                 fi
-                            else
-                                break
-                            fi
-                        done
+                            done ;;
+                            2) fsformat=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Please select the filesystem to be formated on $devdisk" 0 0 0 \
+                            "Ext2" "Standard Extended Filesystem version 2" \
+                            "Ext3" "Ext2 with journaling" \
+                            "Ext4" "Latest version of Extended Filesystem improved" \
+                            "FAT32" "Compatible, highly usable filesystem" \
+                            "NTFS" "Standard Windows filesystem, use for data transfer only");;
+                        esac
                         break
                     else
                         break
@@ -359,23 +401,57 @@ disksel() {
     done
 }
 ossel() {
-    osbs=$(dialog --backtitle "$bt" --title "$tt" --stdout --cancel-label "Back" --menu "Choose based distro" 0 0 0 1 "Arch-based" 2 "Debian/Ubuntu-based")
-    if [ $osbs -eq 1 ]; then
-        ostp=1
-        pac
-    elif [ $osbs -eq 2 ]; then
-        ostp=2
-        deb
-    fi
+    tt="Installing progres"
+    while true; do
+        osbs=$(dialog --backtitle "$bt" --title "$tt" --stdout --cancel-label "Exit to menu" --menu "Choose based distro" 0 0 0 \
+        "Arch" "Arch Linux based ExtOS full installation" \
+        "Debian" "Debian based full installation" \
+        "Frugal" "Minimal frugal installation")
+        if [ $? -eq 0 ]; then
+            if [ $lm -eq 1 ]; then
+                if dialog --backtitle "$bt" --title "$tt" --yesno "Your cpu supports 64-bit architecture, would you like to install ExtOS 64bit?"; then
+                    arct="amd64"
+                else
+                    arct="i386"
+                fi
+            else
+                arct="i386" # Uses i686 instead
+            fi
+            case $osbs in
+                "Arch")  ;;
+                "Debian")  ;;
+                "Frugal")  ;;
+            esac
+        else
+            menusel
+        fi
+    done
+}
+initsel(){
+    initype=$(dialog --backtitle "$bt" --title "$tt" --stdout --cancel-label "Back" --radiolist "Use arrow keys and Space to select which init system you would prefered\n\nComparision: https://wiki.gentoo.org/wiki/Comparison_of_init_systems" 0 0 0 \
+        "SystemD" "Standard init system, provides more than just an init" \
+        "OpenRC" "SysVinit based, suitable for minimal installation" \
+        "runit" "A daemontools-inspired process supervision suite" )
+    debootstrap=$(debootstrap --arch $arct stable /mnt/)
+    pacstrap=$(pacstrap /mnt/ base)
+}
+frugal(){}
+presel() {
+    dialog --backtitle "$bt" --title "$tt" --ok-label "Configure" --cancel-label "Back" --extra-button --extra-label "Next" --checklist "Choose one of the presets below, or do it later\nUse arrows key and space" 0 0 0 \
+    "encrypted" "Destination disk will be encrypted with LUKS" off \
+    "gaming" "Cross-play suite for gamers" off \
+    "office" "Suit for office work, with many useful softwares" off \
+    "devel" "Developing enviroment for coders/developers" off \
+    "server" "Tools and utilities for a mini host server" off
 }
 deb() {
     debdist=$(dialog --backtitle "$bt" --title "$tt" --stdout --cancel-label "Back" --radiolist "$distrose" 0 0 0 \
-        1 "Ubuntu          amd64/x86_64    21.04 lts       systemd" on \
-        2 "Devuan(Debian)  amd64/x86_64    Beowulf         openrc " off \
-        3 "Devuan(Debian)  amd64/x86_64    Beowulf         runit  " off \
-        4 "Debian          i386/i686/x86   buster          systemd" off \
-        5 "Devuan(Debian)  i386/i686/x86   Beowulf         openrc " off \
-        6 "Devuan(Debian)  i386/i686/x86   Beowulf         runit  " off )
+        1 "Debian          amd64/x86_64    stable       systemd" on \
+        2 "Devuan(Debian)  amd64/x86_64    stable         openrc " off \
+        3 "Devuan(Debian)  amd64/x86_64    stable         runit  " off \
+        4 "Debian          i386/i686/x86   stable          systemd" off \
+        5 "Devuan(Debian)  i386/i686/x86   stable         openrc " off \
+        6 "Devuan(Debian)  i386/i686/x86   stable         runit  " off )
     echo $debdist >> ./out
 }
 pac() {
@@ -428,8 +504,8 @@ menusel() {
         esac
     done
 }
-main() {
-    netinit
+main(){
+    init
     dircheck
     keymapc
     localec
@@ -440,12 +516,8 @@ main() {
 }
 if dialog --backtitle "$bt" --title "$tt" --yesno "This is ExtOS linux respin v0.1\nMade by Shadichy\n\nStart installation process?" 0 0
 then
-#    main
-#    diskchoose
     menusel
-#    disksel
 else
-#    clear
     printf "Run ./install.sh to restart the installer\n"
     star="*       "
     for dev in $(lsblk -n -p -r -e 7,11 -o NAME); do
