@@ -3,6 +3,7 @@
 ## Introduction
 
   Welcome to the officical github page of ExtOS System Installer project.
+  
   **The os and the installer is still WIP**
 
   ### About the OS
