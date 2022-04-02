@@ -58,6 +58,7 @@
   
   ### 1. Download and flash the ISO
    Download the ISOs from [link](https://drive.google.com/file/d/1Z3dfQ1Dbb4jeEGS-6ktaEAvszGCem8nN/view?usp=sharing).
+   
    `Beta version, contains lots of bugs`
     
   #### Use flash tool
