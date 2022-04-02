@@ -82,11 +82,11 @@
    #### Load extracted iso from [GRUB](https://www.gnu.org/software/grub/)
    
    > **Create menu entry**
-   > `Ai rảnh mà làm`
-   > `WIP`
+    `Ai rảnh mà làm`
+    `WIP`
    
    > **Use GRUB shell**
-   > Simply just run all `Create menu entry` commands without `menuentry {}` wrapper
+    Simply just run all `Create menu entry` commands without `menuentry {}` wrapper
    
   ### 2. Để viết sau
   
