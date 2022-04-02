@@ -63,11 +63,13 @@
   #### Use flash tool
     
    > After downloading iso file, use either [Rufus](https://rufus.ie/en/), [Unetbootin](https://unetbootin.github.io/), import ISO and flash it into the destination disk
+   > 
    > `Don't try this`
     
    #### Extract
     
    > In case the above methods did not work, try **Format the des disk as FAT32 filesystem** (also works with NTFS, ext2/3/4, exFAT, but not recommended), label it "**ESI**" and extract the iso contents to the destination disk
+   > 
    > *(**Linux users**: flag destination disk/partition as bootable)*
       
    #### Loopback using [GRUB](https://www.gnu.org/software/grub/)
