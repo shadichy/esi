@@ -63,7 +63,7 @@ netcheck() {
         printf "\n"
         printf "\e[1;32mQuick guide:\n"
         printf "\n"
-        printf "\e[1;33m  (For more 'spaces': Press Ctrl + Alt + F2 switching to TTY2 (Ctrl + Alt + F1 to get back))\n"
+        printf "\e[1;33m  (For more 'space': Press Ctrl + Alt + F2 switching to TTY2 (Ctrl + Alt + F1 to get back) or open a new terminal)\n"
         printf "\n\e[1;36m"
         printf "    Run command 'ip link' to check enabled network interfaces\n"
         printf "    Run command 'rfkill list all' to list blocked network card and 'rfkill unblock all' to unblock all Soft-blocked network card\n"
@@ -419,11 +419,14 @@ disksel() {
                             break
                         done ;;
                         2) fsformat=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Please select the filesystem to be formated on $devdisk" 0 0 0 \
-                        "Ext2" "Standard Extended Filesystem version 2" \
+                        "Ext2" "Standard Extended Filesystem for Linux version 2" \
                         "Ext3" "Ext2 with journaling" \
                         "Ext4" "Latest version of Extended Filesystem improved" \
                         "FAT32" "Compatible, highly usable filesystem" \
-                        "NTFS" "Standard Windows filesystem, use for data transfer only");;
+                        "XFS" "High-performance filesystem for server use" \
+                        "JFS" "Journaled filesystem by IBM" \
+                        "ZFS" "Filesystem for storing and managing large volume of data provided by OpenZFS" \
+                        "NTFS" "Standard Windows filesystem, use for data transfer only (ExtOS Frugal installable)");;
                         3) while true; do
                                 cryptpass=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --inputbox "$devdisk appears to be an encrypted partition\nIt must be unlocked in order to continue\n\nPlease enter the encryption passphrase:" 0 0)
                                 if [ $? -ne 0 ]; then
@@ -536,20 +539,40 @@ pisel() {
         "gaming" "Cross-play suite for gamers" off \
         "office" "Suit for office work, with many useful softwares" off \
         "devel" "Developing enviroment for coders/developers" off \
-        "server" "Tools and utilities for a mini host server" off )
+        "server" "Tools and utilities for a mini host server" off \
+        "custom" "Customize your own preset" off)
         case $? in
             0)
+                # cat pkglist-<base distro> from ./preset/<post-install options> folder to pkglist (if there are any duplicates, remove them)
+                for f in $piscript; do
+                    if [ -f "preset/$f/pkglist-$osbs" ]; then
+                        cat preset/$f/pkglist-$osbs >> pkglist
+                    fi
+                done
+                # remove duplicates
+                sort -u pkglist -o pkglist
+                # check if custom is selected
+                if [ "$piscript" == "*custom*" ]; then
+                    # open a dialog to edit the pkglist
+                    pkglist=$(dialog --backtitle "$bt" --title "Customize your own preset" --stdout --ok-label "Save" --cancel-label "Continue" --editbox "pkglist" 0 0)
+                    if [ $? -eq 0 ]; then
+                        echo $pkglist > pkglist
+                    fi
+                fi
+
                 if [ -z "$(printf "%s\n" "$piscript" | grep -w "encrypted")" ]; then
                         osdone="*"
                         break
                 fi
                 while true; do
-                    cryptpass=$(dialog --backtitle "$bt" --title "Partition the harddrive" --nocancel --inputbox "$devdisk appears to be an encrypted partition\nIt must be unlocked in order to continue\n\nPlease enter the encryption passphrase:" 0 0 3>&1 1>&2 2>&3)
+                    cryptpass=$(dialog --backtitle "$bt" --title "$tt" --stdout --inputbox "Please enter the encryption passphrase:" 0 0)
                     if [ $? -eq 0 ]; then
                         osdone="*"
                         break
                     fi
-                    dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the encryption passphrase!"
+                    if [ -z $cryptpass ]; then
+                        dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: You didn't entered the encryption passphrase!"
+                    fi
                 done
                 ;;
             1)
