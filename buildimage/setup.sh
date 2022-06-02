@@ -14,11 +14,15 @@ delfile () {
 }
 # Check for sudo
 if [ ! $(id -u) -eq 0 ]; then
-	echo "Root required"
+	echo "Build failed: Root required"
 	exit 1
 fi
 echo "Root access granted"
 
+if [ ! -f root.img ]; then
+	echo "No root image (root.img) found at $WORKDIR, please get at least one from Shadichy!"
+	exit 1
+fi
 echo "Preparing to build ExtOS iso"
 # Clean up before running
 umount -l /dev/loop*
@@ -44,15 +48,14 @@ echo "Creating a new copy of root image"
 dd if=root.img of=new_root.img status=progress
 # Mount that copy
 echo "Mounting new root image"
-losetup -fP new_root.img
-mount /dev/loop0 $WORKDIR/mounts/root
+mount -o loop new_root.img $WORKDIR/mounts/root
 
 # Remove files that are not needed
 echo "Deleting unnecessary files"
 
 cd $WORKDIR/mounts/root
 
-xargs --arg-file="/home/shadichy/Music/files" rm -rf
+xargs --arg-file="$WORKDIR/files" rm -rf
 rm -rf usr/lib/modules/*/build
 
 delfile usr/share/ibus/dicts $(ls | grep emo | grep -Ev "en|vi")
@@ -61,12 +64,26 @@ delfile usr/share/locale $(ls -d -- */ | grep -Ev "en|vi")
 delfile usr/share/qt/translations $(ls | grep -v "en")
 delfile usr/share/unicode/cldr/*/* $(ls | grep -Ev "en|vi|root")
 
+rm -rf .Trash-*
 rm -rf var/lib/pacman
 rm -rf var/lib/dkms
-rm -rf var/home/shadichy
+rm -rf var/home/extuser/.cache
+rm -rf var/home/extuser/.bash_history
 rm -rf var/cache/*
 rm -rf var/tmp/*
 rm -rf var/log/*
+rm -rf root/.*
+
+# Copy kernal n init
+rm -rf $WORKDIR/iso/boot/vmlinuz
+cp boot/vmlinuz-* $WORKDIR/iso/boot
+mv $WORKDIR/iso/boot/vmlinuz-* $WORKDIR/iso/boot/vmlinuz
+
+rm -rf $WORKDIR/iso/boot/*.img
+cp boot/*.img $WORKDIR/iso/boot/
+mv $WORKDIR/iso/boot/initramfs-*-fallback.img $WORKDIR/iso/boot/initramfs-preload.img
+mv $(ls $WORKDIR/iso/boot/initramfs-*.img | grep -Evw "initramfs-preload.img") $WORKDIR/iso/boot/initramfs.img
+
 rm -rf boot/*
 
 cd $WORKDIR
@@ -86,17 +103,17 @@ echo "Proccessing data image"
 # Check if image exist
 if [ ! -f iso/data.img ]; then
 	echo "Creating data image"
-	dd if=/dev/zero of=iso/data.img bs=1M count=385 status=progress
+	dd if=/dev/zero of=iso/data.img bs=1M count=32 status=progress
+	mkfs.ext4 -F iso/data.img
 fi
-losetup -fP iso/data.img
-mount /dev/loop1 $WORKDIR/mounts/data
+mount -o loop iso/data.img $WORKDIR/mounts/data
 cd $WORKDIR/mounts/data
 
 # Modify data image
-rm -rf $(ls -d -- */ | grep -Ev "home|log|tmp|cache|ssh")
+rm -rf $(ls -d -- */ | grep -Ev "log|tmp|cache")
 
 cd $WORKDIR
-rsync -a --ignore-existing $WORKDIR/mounts/root/var/ $WORKDIR/mounts/data
+rsync -a --ignore-existing $WORKDIR/mounts/root/var/ $WORKDIR/mounts/data/var/
 
 # Delete source
 rm -rf $WORKDIR/mounts/root/var/*
@@ -108,11 +125,9 @@ mksquashfs $WORKDIR/mounts/root iso/root.sfs
 # Clean up
 echo "Cleaning up"
 # Unmount disk images
-umount /dev/loop1
-losetup -d /dev/loop1
+umount $WORKDIR/mounts/data
 
-umount /dev/loop0
-losetup -d /dev/loop0
+umount $WORKDIR/mounts/root
 rm -rf new_root.img
 
 # Update build
@@ -131,7 +146,7 @@ sed -i -e "s/\(LAST_BUILD=*\).*/\1$(date +%s)/" $CFG_FILE
 echo "Creating iso"
 . $CFG_FILE
 # mkisofs -o "ExtOS-beta-v0.$MASTER.$MINUS-build$BUILD_NO-$ARCH.iso" -b isolinux/isolinux.bin -c isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table -R -J -v -T $WORKDIR/iso
-grub-mkrescue -V "ExtOS" -o "ExtOS-beta-v0.$MASTER.$MINUS-build$BUILD_NO-$ARCH.iso" iso
+grub-mkrescue -V "EXTOS" -o "ExtOS-beta-v0.$MASTER.$MINUS-build$BUILD_NO-$ARCH.iso" iso
 END_TIME=$(date +%s)
 # Done
 HOUR=$((($END_TIME - $START_TIME))/3600)

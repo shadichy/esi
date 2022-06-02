@@ -9,15 +9,17 @@ locdone=""
 tzcdone=""
 usrdone=""
 pttdone=""
+osdone=""
 distrose="Choose based distribution by selecting then press Space\n\n         BASED ON        ARCH            VERSION         INIT"
 mntlst=("")
 lm=0
+verstring="root-"
 
 init() {
     case $(lscpu | grep Arch | awk '{print $2}') in
-        "x86_64") lm=1; break;;
-        "x86") lm=0; break;;
-        *) dialog --backtitle "$bt" --title "$tt" --msgbox "Your cpu is not supported, please install on another computer"
+        "x86_64") lm=1;;
+        "x86") lm=0;;
+        *) dialog --backtitle "$bt" --title "$tt" --msgbox "Your CPU is not supported, please install on another computer"
         exit 1 ;;
     esac
     if [ -d /sys/firmware/efi ]; then
@@ -25,7 +27,7 @@ init() {
     else
         cmos=""
     fi
-    if nc -zw1 archlinux.org 80 || wget -q --spider http://archlinux.org; then
+    if wget -q --spider http://archlinux.org || nc -zw1 archlinux.org 80; then
         net=2
         nct=0
         netdone="*"
@@ -64,7 +66,7 @@ netcheck() {
         printf "\e[1;33m  (For more 'spaces': Press Ctrl + Alt + F2 switching to TTY2 (Ctrl + Alt + F1 to get back))\n"
         printf "\n\e[1;36m"
         printf "    Run command 'ip link' to check enabled network interfaces\n"
-        printf "    Run command 'rfkill list all' to list blocked network card and 'rfkill unlock all' to unlock all Soft-blocked network card\n"
+        printf "    Run command 'rfkill list all' to list blocked network card and 'rfkill unblock all' to unblock all Soft-blocked network card\n"
         printf "    Run command 'iwctl' or 'wpa_cli' to configure wireless connection\n"
         printf "    Run command 'mmcli' to configure mobile network\n"
         printf "\n"
@@ -75,7 +77,7 @@ netcheck() {
         printf "\n"
         $SHELL
         nct=1
-        netinit
+        init
     fi
 }
 keymapc() {
@@ -262,6 +264,7 @@ usrname() {
         fi
     done
 }
+
 mntck() {
     for dir in $(ls -A /mnt); do
         if mountpoint -q $dir; then
@@ -275,6 +278,7 @@ mntck() {
         swapoff -a
     fi
 }
+
 diskchoose() {
     diskconfirm=0
     while true; do
@@ -283,7 +287,31 @@ diskchoose() {
             "Basic" "Select (a) disk/partition(s) to install" \
             "Manual" "Customize disk/partition layout")
         case "$disk" in
-            "Auto") ;;
+            "Auto") 
+                # Auto partitioning
+                # Check if there is a disk with at least 4GB free space, if there isn't, check if there is a partition with at least 4GB free space
+                # If there is a disk with at least 4GB free space, create a partition on that space
+                # If there is a partition with at least 4GB free space, use that partition
+                # If there is no disk with at least 4GB free space, or no partition with at least 4GB free space, echo error and go to diskchoose
+                # use printf "fix\n" | parted ---pretend-input-tty <target disk> print free | grep "Free Space" to get the free space of the target disk
+                # mount a partition to get its free space
+                # get a list of disks/partitions: use lsblk
+                for d in $(lsblk -n -p -r -e 7,11,251 -d -o NAME); do
+                    # for each line in $(printf "fix\n" | parted ---pretend-input-tty $d print free | grep "Free Space"), check if column 3 is at least 4GB
+                    # if it is, create a partition on that disk
+                    for f in $(printf "fix\n" | parted ---pretend-input-tty $d unit B print free | grep "Free Space"); do
+                        if [ $(printf $f | awk '{print $3}') -ge 4194304 ]; then
+                            part_start=$(printf $f | awk '{print $1}')
+                            part_end=$(printf $f | awk '{print $2}')
+                            mknewpart=true
+                            # printf "fix\n" | parted ---pretend-input-tty $d mkpart primary $start $end
+                            break
+                        fi
+                    done
+
+                done
+                
+                ;;
             "Basic") disksel
                 if [ $diskconfirm -eq 1 ]; then
                     break
@@ -302,32 +330,47 @@ diskchoose() {
         esac
     done
 }
-disksel() {
-    for dev in $(lsblk -n -p -r -e 7,11 -o NAME); do
+
+disklst() {
+    unset devs
+    for dev in $(lsblk -n -p -r -e 7,11,251 -o NAME); do
         devsz=$(lsblk -d -n -r -o SIZE "$dev")
-        devfs="$(lsblk -d -n -r -o FSTYPE "$dev") $(lsblk -d -n -o TYPE $dev)"
-        while [ ${#dev} -lt 16 ]; do
-            dev+=" "
-        done
-        while [ ${#devsz} -lt 10 ]; do
-            devsz+=" "
-        done
-        while [ ${#devfs} -lt 12 ]; do
-            devfs+=" "
-        done
-        devs+=("$dev" "$devsz$devfs")
+        devtp=$(lsblk -d -n -o TYPE $dev)
+        devfs=$(lsblk -d -n -r -o FSTYPE "$dev")
+        # while [ ${#dev} -lt 16 ]; do
+        #     dev+=" "
+        # done
+        # while [ ${#devsz} -lt 8 ]; do
+        #     devsz+=" "
+        # done
+        # while [ ${#devtp} -lt 8 ]; do
+        #     devtp+=" "
+        # done
+        # while [ ${#devfs} -lt 8 ]; do
+        #     devfs+=" "
+        # done
+        devmp=" "
+        hasmntpt=$(printf "%s\n" "${mntlst[@]}" | grep -w "$dev")
+        if [ ! -z "$hasmntpt" ]; then
+            devmp=$(echo $hasmntpt | awk '{print $2}')
+        fi
+        devs+=("$dev"$'\t'"" "$devtp"$'\t'"$devfs"$'\t'"$devsz"$'\t'"$devmp")
     done
+}
+
+disksel() {
+    disklst
     mntck
     while true; do
         if [ ${#devs[@]} -eq 0 ]; then
             dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "No device is available to install" 0 0
             break
         fi
-        devdisk=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --ok-label "Select" --extra-button --extra-label "Next" --stdout --menu "Select the disk for ExtOS to be installed on. Note that the disk you select will be erased, but not until you have confirmed the changes.\n\nSelect the disk in the list below:" 0 0 0 "${devs[@]}")
+        devdisk=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --ok-label "Select" --extra-button --extra-label "Next" --stdout --menu "Select the disk/partition for ExtOS to be installed on. Note that the disk/partition you select will be erased, but not until you have confirmed the changes.\n\nSelect the disk in the list below:" 0 80 0 "${devs[@]}")
         case $? in
             0)
                 devtype=$(lsblk -d -n -r -o TYPE $devdisk)
-                if [ $devtype == disk ]; then
+                if [ $devtype == "disk" ]; then
                     dorpa="Partition table: $(fdisk -l $devdisk | grep Disklabel | awk '{print $3}')"
                     dorpb=" entire disk"
                 else
@@ -335,57 +378,68 @@ disksel() {
                     dorpb=""
                 fi
                 while true; do
-                    mntopts=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "${devtype^^} $devdisk\n    Type: $devtype\n    $dorpa\n    Size: $(lsblk -d -n -r -o SIZE $devdisk)\n    In use: none\n\nChoose an action:" 0 0 0 1 "Use$dorpb as " 2 "Format")
-                    if [ $? -eq 0 ]; then
-                        case $mntopts in
-                            1) while true; do
-                                mntpt=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Choose mountpoint for $devtype $devdisk:\n\nNote: everything except "/" and "/boot" are optional" 0 0 0 \
-                                "/" "This is where the base system will be installed" \
-                                "/boot" "Needed for UEFI/LVM(bios/mbr)/encryption" \
-                                "/home" "Userspace data will be saved here" \
-                                "/usr" "App data will be stored here" \
-                                "/etc" "App Configurations will be stored here" \
-                                "/root" "Userspace data for root/admin will be stored here" \
-                                "/var" "Stores app data, must be mounted as read-write" \
-                                "swap" "Virtual memory partition" )
-                                if [ $? -eq 0 ]; then
-                                    if dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --yesno "Warning: All data on ${devtype^} $devdisk will be erased\n\nContinue?" 0 0 ; then
-                                        cryptpass=""
-                                        if [ $devtype == crypt ]; then
-                                            while true; do
-                                                cryptpass=$(dialog --backtitle "$bt" --title "Partition the harddrive" --nocancel --inputbox "$devdisk appears to be an encrypted partition\nIt must be unlocked in order to continue\n\nPlease enter the encryption passphrase:" 0 0 3>&1 1>&2 2>&3)
-                                                if [ $? -eq 0 ]; then
-                                                    break
-                                                else
-                                                    dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the encryption passphrase!"
-                                                fi
-                                            done
-                                        fi
-                                        mntlst+=("$devdisk $mntpt $cryptpass")
-                                        if [ ! -z $(printf '%s\n' "${mntlst[@]}" | grep "/" | awk '{print $2}') ]; then
-                                            pttdone="*"
-                                        else
-                                            pttdone=""
-                                        fi
-                                        break
+                    cryptopt=""
+                    if [ $devtype == "crypt" ]; then
+                        cryptopt="3 \"Mount Encrypted\""
+                    fi
+                    mntopts=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "${devtype^^} $devdisk\n    Type: $devtype\n    $dorpa\n    Size: $(lsblk -d -n -r -o SIZE $devdisk)\n    In use: none\n\nChoose an action:" 0 0 0 1 "Use$dorpb as " 2 "Format" $cryptopt)
+                    if [ $? -ne 0 ]; then
+                        break
+                    fi
+                    case $mntopts in
+                        1) while true; do
+                            mntpt=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Choose mountpoint for $devtype $devdisk:\n\nNote: everything except "/" and "/boot" are optional" 0 0 0 \
+                            "/" "This is where the base system will be installed" \
+                            "/boot" "Needed for UEFI/LVM(bios/mbr)/encryption" \
+                            "/home" "Userspace data will be saved here" \
+                            "/usr" "App data will be stored here" \
+                            "/etc" "App Configurations will be stored here" \
+                            "/root" "Userspace data for root/admin will be stored here" \
+                            "/var" "Stores app data, must be mounted as read-write" \
+                            "swap" "Virtual memory partition" )
+                            if [ $? -ne 0 ]; then
+                                break
+                            fi
+                            if dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --yesno "Warning: All data on ${devtype^} $devdisk will be erased\n\nContinue?" 0 0 ; then
+                                if [ ! -z "$(printf "%s\n" "${mntlst[@]}" | grep -w "$mntpt")" ]; then
+                                    if dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --yesno "Warning: The mountpoint $mntpt is already in use.\n\nContinue?" 0 0 ; then
+                                        mntlst=( "${mntlst[@]/$(printf "%s\n" "${mntlst[@]}" | grep -w "$mntpt")}" )
                                     else
                                         break
                                     fi
+                                fi
+                                mntlst+=("$devdisk $mntpt")
+                                if [ ! -z $(printf '%s\n' "${mntlst[@]}" | grep -w "/" | awk '{print $2}') ]; then
+                                    pttdone="*"
                                 else
+                                    pttdone=""
+                                fi
+                            fi
+                            disklst
+                            break
+                        done ;;
+                        2) fsformat=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Please select the filesystem to be formated on $devdisk" 0 0 0 \
+                        "Ext2" "Standard Extended Filesystem version 2" \
+                        "Ext3" "Ext2 with journaling" \
+                        "Ext4" "Latest version of Extended Filesystem improved" \
+                        "FAT32" "Compatible, highly usable filesystem" \
+                        "NTFS" "Standard Windows filesystem, use for data transfer only");;
+                        3) while true; do
+                                cryptpass=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --inputbox "$devdisk appears to be an encrypted partition\nIt must be unlocked in order to continue\n\nPlease enter the encryption passphrase:" 0 0)
+                                if [ $? -ne 0 ]; then
                                     break
                                 fi
+                                if [ -z $cryptpass ]; then
+                                    dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the encryption passphrase!"
+                                fi
+                                if cryptsetup luksOpen $devdisk $devdisk"_crypt" --key-file=-; then
+                                    break
+                                else
+                                    dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: Could not unlock the partition.\n\nPlease check the passphrase and try again."
+                                fi
                             done ;;
-                            2) fsformat=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Please select the filesystem to be formated on $devdisk" 0 0 0 \
-                            "Ext2" "Standard Extended Filesystem version 2" \
-                            "Ext3" "Ext2 with journaling" \
-                            "Ext4" "Latest version of Extended Filesystem improved" \
-                            "FAT32" "Compatible, highly usable filesystem" \
-                            "NTFS" "Standard Windows filesystem, use for data transfer only");;
-                        esac
-                        break
-                    else
-                        break
-                    fi
+                    esac
+                    break
                 done
                 ;;
             3)
@@ -394,55 +448,139 @@ disksel() {
                 break
                 ;;
             *)
-                unset devs
                 break
                 ;;
         esac
     done
 }
+
 ossel() {
-    tt="Installing progres"
+    tt="Installing progress"
     while true; do
         osbs=$(dialog --backtitle "$bt" --title "$tt" --stdout --cancel-label "Exit to menu" --menu "Choose based distro" 0 0 0 \
         "Arch" "Arch Linux based ExtOS full installation" \
         "Debian" "Debian based full installation" \
         "Frugal" "Minimal frugal installation")
-        if [ $? -eq 0 ]; then
-            if [ $lm -eq 1 ]; then
-                if dialog --backtitle "$bt" --title "$tt" --yesno "Your cpu supports 64-bit architecture, would you like to install ExtOS 64bit?"; then
-                    arct="amd64"
-                else
-                    arct="i386"
-                fi
-            else
-                arct="i386" # Uses i686 instead
-            fi
-            case $osbs in
-                "Arch")  ;;
-                "Debian")  ;;
-                "Frugal")  ;;
-            esac
-        else
+        if [ $? -ne 0 ]; then
             menusel
+            return
+        fi
+        if [ $lm -eq 1 ]; then
+            if dialog --backtitle "$bt" --title "$tt" --yesno "Your CPU supports 64-bit architecture, would you like to install ExtOS 64bit?"; then
+                arct="amd64"
+            else
+                arct="i386"
+            fi
+        else
+            arct="i386" # Uses i686 instead
+        fi
+        case $osbs in
+            "Arch") osbs="arch" ;;
+            "Debian") osbs="deb" ;;
+            "Frugal") osbs="sfs" ;;
+        esac
+        initsel
+        if [ ! -z "$osdone" ]; then
+            break
+        fi
+    done
+    start_install "$verstring"
+}
+
+initsel(){
+    while true; do
+        initype=$(dialog --backtitle "$bt" --title "$tt" --stdout --cancel-label "Back" --radiolist "Use arrow keys and Space to select which init system you would prefered\n\nComparision: https://wiki.gentoo.org/wiki/Comparison_of_init_systems" 0 0 0 \
+        "SystemD" "Standard init system, provides more than just an init system" on\
+        "OpenRC" "SysVinit based, suitable for minimal installation" off\
+        "runit" "A daemontools-inspired process supervision suite" off)
+        if [ $? -ne 0 ]; then
+            break
+        fi
+        case $initype in
+            "SystemD")
+                initype="sysd"
+                ;;
+            "OpenRC")
+                initype="oprc"
+                ;;
+            "runit")
+                initype="rnit"
+                ;;
+        esac
+        libcsel
+        if [ ! -z "$osdone" ]; then
+            break
         fi
     done
 }
-initsel(){
-    initype=$(dialog --backtitle "$bt" --title "$tt" --stdout --cancel-label "Back" --radiolist "Use arrow keys and Space to select which init system you would prefered\n\nComparision: https://wiki.gentoo.org/wiki/Comparison_of_init_systems" 0 0 0 \
-        "SystemD" "Standard init system, provides more than just an init" \
-        "OpenRC" "SysVinit based, suitable for minimal installation" \
-        "runit" "A daemontools-inspired process supervision suite" )
-    debootstrap=$(debootstrap --arch $arct stable /mnt/)
-    pacstrap=$(pacstrap /mnt/ base)
+
+libcsel() {
+    while true; do
+        libctype=$(dialog --backtitle "$bt" --title "$tt" --stdout --cancel-label "Back" --radiolist "Use arrow keys and Space to select which libc you would prefered\n\nComparision: https://wiki.gentoo.org/wiki/Comparison_of_libc" 0 0 0 \
+        "glibc" "Standard libc, supports most of the modern linux kernel" on\
+        "musl" "Minimal libc, supports only the bare minimum for the kernel" off)
+        if [ $? -ne 0 ]; then
+            break
+        fi
+        pisel
+        if [ ! -z "$osdone" ]; then
+            break
+        fi
+    done
 }
-frugal(){}
-presel() {
-    dialog --backtitle "$bt" --title "$tt" --ok-label "Configure" --cancel-label "Back" --extra-button --extra-label "Next" --checklist "Choose one of the presets below, or do it later\nUse arrows key and space" 0 0 0 \
-    "encrypted" "Destination disk will be encrypted with LUKS" off \
-    "gaming" "Cross-play suite for gamers" off \
-    "office" "Suit for office work, with many useful softwares" off \
-    "devel" "Developing enviroment for coders/developers" off \
-    "server" "Tools and utilities for a mini host server" off
+
+pisel() {
+    while true;do
+        piscript=$(dialog --backtitle "$bt" --title "$tt" --stdout --ok-label "Next" --cancel-label "Back" --extra-button --extra-label "Skip" --checklist "Choose one of the presets below, or do it later\nUse arrows key and space" 0 0 0 \
+        "encrypted" "Destination disk will be encrypted with LUKS" off \
+        "gaming" "Cross-play suite for gamers" off \
+        "office" "Suit for office work, with many useful softwares" off \
+        "devel" "Developing enviroment for coders/developers" off \
+        "server" "Tools and utilities for a mini host server" off )
+        case $? in
+            0)
+                if [ -z "$(printf "%s\n" "$piscript" | grep -w "encrypted")" ]; then
+                        osdone="*"
+                        break
+                fi
+                while true; do
+                    cryptpass=$(dialog --backtitle "$bt" --title "Partition the harddrive" --nocancel --inputbox "$devdisk appears to be an encrypted partition\nIt must be unlocked in order to continue\n\nPlease enter the encryption passphrase:" 0 0 3>&1 1>&2 2>&3)
+                    if [ $? -eq 0 ]; then
+                        osdone="*"
+                        break
+                    fi
+                    dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the encryption passphrase!"
+                done
+                ;;
+            1)
+                break
+                ;;
+            3)
+                osdone="*"
+                break
+                ;;
+        esac
+        if [ ! -z "$osdone" ]; then
+            break
+        fi
+    done
+}
+start_install(){
+    # confirming all the choices made and starting the installation
+    if dialog --backtitle "$bt" --title "Confirmation" --yesno "You have selected these:\n\n\
+    Base: $osbs\n\
+    Init system: $initype\n\
+    Libc: $libctype\n\
+    Presets: $piscript\n\
+
+    Partition table: \n\
+    $(printf "\t%s\n" "${mntlst[@]}")\n\
+    \n\
+    Do you want to continue?"; then
+        echo start
+    else
+        ossel
+    fi
 }
 deb() {
     debdist=$(dialog --backtitle "$bt" --title "$tt" --stdout --cancel-label "Back" --radiolist "$distrose" 0 0 0 \
@@ -471,10 +609,10 @@ poweropts() {
         "Hibernate" "Hibernate the machine and save current state to disk/RAMdisk" \
         "Shutdown " "Exit the installer and power off the  machine")
     case $pwvar in
-        "Reboot   ") systemctl reboot ;;
-        "Sleep    ") systemctl suspend;;
+        "Reboot   ") reboot ;;
+        "Sleep    ") suspend;;
         "Hibernate") systemctl hibernate;;
-        "Shutdown ") systemctl poweroff;;
+        "Shutdown ") poweroff;;
     esac
 }
 menusel() {
@@ -517,24 +655,7 @@ main(){
 if dialog --backtitle "$bt" --title "$tt" --yesno "This is ExtOS linux respin v0.1\nMade by Shadichy\n\nStart installation process?" 0 0
 then
     menusel
+    # main
 else
     printf "Run ./install.sh to restart the installer\n"
-    star="*       "
-    for dev in $(lsblk -n -p -r -e 7,11 -o NAME); do
-        devsz=$(lsblk -d -n -r -o SIZE "$dev")
-        devfs="$(lsblk -d -n -r -o FSTYPE "$dev") $(lsblk -d -n -o TYPE $dev)"
-        while [ ${#devsz} -lt 8 ]; do
-            devsz+=" "
-        done
-        while [ ${#devfs} -lt 8 ]; do
-            devfs+=" "
-        done
-        devs+=("$dev" "$devsz$devfs")
-    done
-    clear
-    echo "${devs[@]}" >> ./out
-    exit
 fi
-echo "let's continue"
-#locale=$( dialog --backtitle "$bt" --title "$tt" --msgbox "check" 10 40 3>&1 1>&2 2>&3 3>&- )
-#echo "$locale" >> ./out
