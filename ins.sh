@@ -1,8 +1,15 @@
 #!/bin/bash
+
+label="EXTOS"
+
 net=0
 nct=0
+lm=0
+
 workdir=$(pwd)
+
 bt="ExtOS-respin Installer"
+
 netdone=""
 keydone=""
 locdone=""
@@ -10,10 +17,8 @@ tzcdone=""
 usrdone=""
 pttdone=""
 osdone=""
-distrose="Choose based distribution by selecting then press Space\n\n         BASED ON        ARCH            VERSION         INIT"
+
 mntlst=("")
-lm=0
-verstring="root-"
 
 init() {
     case $(lscpu | grep Arch | awk '{print $2}') in
@@ -287,30 +292,81 @@ diskchoose() {
             "Basic" "Select (a) disk/partition(s) to install" \
             "Manual" "Customize disk/partition layout")
         case "$disk" in
-            "Auto") 
-                # Auto partitioning
-                # Check if there is a disk with at least 4GB free space, if there isn't, check if there is a partition with at least 4GB free space
-                # If there is a disk with at least 4GB free space, create a partition on that space
-                # If there is a partition with at least 4GB free space, use that partition
-                # If there is no disk with at least 4GB free space, or no partition with at least 4GB free space, echo error and go to diskchoose
-                # use printf "fix\n" | parted ---pretend-input-tty <target disk> print free | grep "Free Space" to get the free space of the target disk
-                # mount a partition to get its free space
-                # get a list of disks/partitions: use lsblk
+            "Auto")
                 for d in $(lsblk -n -p -r -e 7,11,251 -d -o NAME); do
-                    # for each line in $(printf "fix\n" | parted ---pretend-input-tty $d print free | grep "Free Space"), check if column 3 is at least 4GB
-                    # if it is, create a partition on that disk
-                    for f in $(printf "fix\n" | parted ---pretend-input-tty $d unit B print free | grep "Free Space"); do
-                        if [ $(printf $f | awk '{print $3}') -ge 4194304 ]; then
-                            part_start=$(printf $f | awk '{print $1}')
-                            part_end=$(printf $f | awk '{print $2}')
-                            mknewpart=true
-                            # printf "fix\n" | parted ---pretend-input-tty $d mkpart primary $start $end
+                    ptb=$(printf "fix\n" | parted ---pretend-input-tty $d print | grep "Partition Table" | awk '{print $3}')
+                    case $ptb in
+                        "gpt")
+                            part_type=$label
+                            ;;
+                        "msdos")
+                            part_type="primary"
+                            ;;
+                        *) continue ;;
+                    esac
+                    create_part() {
+                        for f in $(printf "fix\n" | parted ---pretend-input-tty $d unit B print free | grep "Free Space"); do
+                            part_size=$(printf $f | awk '{print $3}')
+                            if [ ${part_size%B} -ge 4194304 ]; then
+                                part_start=$(printf $f | awk '{print $1}')
+                                part_end=$(printf $f | awk '{print $2}')
+                                part_table_before=( "$(lsblk -n -p -r -e 7,11,251 -o NAME $d)" )
+                                printf "fix\n" | parted ---pretend-input-tty $d mkpart $part_type ext4 $part_start $part_size
+                                if [ $? -ne 0 ]; then
+                                    continue
+                                fi
+                                part_table_after=( "$(lsblk -n -p -r -e 7,11,251 -o NAME $d)" )
+                                part_id=$(echo ${part_table_before[@]} ${part_table_after[@]} | tr ' ' '\n' | sort | uniq -u)
+                                if [ $ptb = "msdos" ]; then
+                                    printf "fix\n" | parted ---pretend-input-tty $part_id -name $label
+                                    if [ $? -ne 0 ]; then
+                                        continue
+                                    fi
+                                fi
+                                e2label $part_id $label
+                                e2fsck -f $part_id
+                                mntlst=( "$part_id /" )
+                            fi
+                        done
+                    }
+                    create_part
+                    if [ ! -z $(printf '%s\n' "${mntlst[@]}" | grep -w "/" | awk '{print $2}') ]; then
+                        break
+                    fi
+                    # mount every single partition, check for its free space, if it's bigger than 4GB, then shrink it and free 4GB for the new root partition
+                    for p in $(lsblk -n -p -r -e 7,11,251 -o NAME $d | grep -vw $d); do
+                        part_kind=$(lsblk -d -n -r -o TYPE $p)
+                        if [ $part_kind = "crypt" ]; then
+                            continue
+                        fi
+                        if [ $part_kind = "lvm" ]; then
+                            continue
+                        fi
+                        if ! mount $p /mnt; then
+                            continue
+                        fi
+                        if [ $(df -m --output=avail /mnt | grep -v "Avail") -lt 4096 ]; then
+                            umount /mnt
+                            continue
+                        fi
+                        # shrink the partition and free up 4gb
+                        umount /mnt
+                        printf "fix\n" | parted ---pretend-input-tty $p resizepart 1 $(( ${(printf "fix\n" | parted ---pretend-input-tty $p unit MiB print | grep -w "1" | awk '{print $3}')%MiB} - 4096 ))
+                        if [ $? -ne 0 ]; then
+                            continue
+                        fi
+                        create_part
+                        if [ ! -z $(printf '%s\n' "${mntlst[@]}" | grep -w "/" | awk '{print $2}') ]; then
                             break
                         fi
                     done
-
+                    if [ ! -z $(printf '%s\n' "${mntlst[@]}" | grep -w "/" | awk '{print $2}') ]; then
+                        break
+                    fi
                 done
-                
+                if [ ! -z $(printf '%s\n' "${mntlst[@]}" | grep -w "/" | awk '{print $2}') ]; then
+                    break
+                fi
                 ;;
             "Basic") disksel
                 if [ $diskconfirm -eq 1 ]; then
@@ -337,18 +393,6 @@ disklst() {
         devsz=$(lsblk -d -n -r -o SIZE "$dev")
         devtp=$(lsblk -d -n -o TYPE $dev)
         devfs=$(lsblk -d -n -r -o FSTYPE "$dev")
-        # while [ ${#dev} -lt 16 ]; do
-        #     dev+=" "
-        # done
-        # while [ ${#devsz} -lt 8 ]; do
-        #     devsz+=" "
-        # done
-        # while [ ${#devtp} -lt 8 ]; do
-        #     devtp+=" "
-        # done
-        # while [ ${#devfs} -lt 8 ]; do
-        #     devfs+=" "
-        # done
         devmp=" "
         hasmntpt=$(printf "%s\n" "${mntlst[@]}" | grep -w "$dev")
         if [ ! -z "$hasmntpt" ]; then
@@ -391,6 +435,7 @@ disksel() {
                             mntpt=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Choose mountpoint for $devtype $devdisk:\n\nNote: everything except "/" and "/boot" are optional" 0 0 0 \
                             "/" "This is where the base system will be installed" \
                             "/boot" "Needed for UEFI/LVM(bios/mbr)/encryption" \
+                            "/boot" "(UEFI) EFI System partition" \
                             "/home" "Userspace data will be saved here" \
                             "/usr" "App data will be stored here" \
                             "/etc" "App Configurations will be stored here" \
@@ -469,7 +514,7 @@ ossel() {
             return
         fi
         if [ $lm -eq 1 ]; then
-            if dialog --backtitle "$bt" --title "$tt" --yesno "Your CPU supports 64-bit architecture, would you like to install ExtOS 64bit?"; then
+            if dialog --backtitle "$bt" --title "$tt" --yesno "Your CPU supports 64-bit architecture, would you like to install ExtOS 64bit?" 0 0; then
                 arct="amd64"
             else
                 arct="i386"
@@ -487,7 +532,7 @@ ossel() {
             break
         fi
     done
-    start_install "$verstring"
+    start_install
 }
 
 initsel(){
@@ -545,8 +590,8 @@ pisel() {
             0)
                 # cat pkglist-<base distro> from ./preset/<post-install options> folder to pkglist (if there are any duplicates, remove them)
                 for f in $piscript; do
-                    if [ -f "preset/$f/pkglist-$osbs" ]; then
-                        cat preset/$f/pkglist-$osbs >> pkglist
+                    if [ -f "preset/$f/$arct/pkglist-$osbs" ]; then
+                        cat preset/$f/$arct/pkglist-$osbs >> pkglist
                     fi
                 done
                 # remove duplicates
@@ -565,12 +610,12 @@ pisel() {
                         break
                 fi
                 while true; do
-                    cryptpass=$(dialog --backtitle "$bt" --title "$tt" --stdout --inputbox "Please enter the encryption passphrase:" 0 0)
+                    ecryptpass=$(dialog --backtitle "$bt" --title "$tt" --stdout --inputbox "Please enter the encryption passphrase:" 0 0)
                     if [ $? -eq 0 ]; then
                         osdone="*"
                         break
                     fi
-                    if [ -z $cryptpass ]; then
+                    if [ -z $ecryptpass ]; then
                         dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: You didn't entered the encryption passphrase!"
                     fi
                 done
@@ -588,6 +633,7 @@ pisel() {
         fi
     done
 }
+
 start_install(){
     # confirming all the choices made and starting the installation
     if dialog --backtitle "$bt" --title "Confirmation" --yesno "You have selected these:\n\n\
@@ -605,26 +651,7 @@ start_install(){
         ossel
     fi
 }
-deb() {
-    debdist=$(dialog --backtitle "$bt" --title "$tt" --stdout --cancel-label "Back" --radiolist "$distrose" 0 0 0 \
-        1 "Debian          amd64/x86_64    stable       systemd" on \
-        2 "Devuan(Debian)  amd64/x86_64    stable         openrc " off \
-        3 "Devuan(Debian)  amd64/x86_64    stable         runit  " off \
-        4 "Debian          i386/i686/x86   stable          systemd" off \
-        5 "Devuan(Debian)  i386/i686/x86   stable         openrc " off \
-        6 "Devuan(Debian)  i386/i686/x86   stable         runit  " off )
-    echo $debdist >> ./out
-}
-pac() {
-    pacdist=$(dialog --backtitle "$bt" --title "$tt" --stdout --cancel-label "Back" --radiolist "$distrose" 0 0 0 \
-        1 "Arch Linux      amd64/x86_64    rolling         systemd" on \
-        2 "Artix(Arch)     amd64/x86_64    rolling         openrc " off \
-        3 "Artix(Arch)     amd64/x86_64    rolling         runit  " off \
-        4 "Arch Linux 32   i386/i686/x86   rolling         systemd" off \
-        5 "Parabola(Arch)  i386/i686/x86   rolling-xtended openrc " off \
-        6 "Obarun(Arch)    i386/i686/x86   rolling-xtended s6/66  " off )
-    echo $pacdist >> ./out
-}
+
 poweropts() {
     pwvar=$(dialog --backtitle "$bt" --title "Power options" --cancel-label "Back" --stdout --menu "Choose option to continue:" 0 0 0 \
         "Reboot   " "Restart the machine and also the installer" \
@@ -638,6 +665,7 @@ poweropts() {
         "Shutdown ") poweroff;;
     esac
 }
+
 menusel() {
     while true; do
     choice=$(dialog --backtitle "$bt" --title "Main Menu" --nocancel \

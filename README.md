@@ -20,7 +20,7 @@
   #### Minimum Requirements
   
   * CPU: i686/amd64 from the 2000s
-  * RAM: 512MB
+  * RAM: depends on installation types (Minimum 512MB)
   * Storage: depends on installation types
   
   #### Installation Types
@@ -29,7 +29,7 @@
       
    * Contains apps, softwares, utilities that work out-of-the-box
    * Minimum storage requires 8GB
-   * Recommend RAM: 1GB
+   * Recommend RAM: 2GB (Minimum 1GB for installed system and 2GB for live iso)
    * Rolling release
    * Graphic cards supported
       
@@ -38,8 +38,9 @@
    * Integrated in the live iso, copy directly to the destination
    * Contains only necessary softwares
    * Minimum storage requires 2GB
+   * At least 512MB ram (Recommend 2GB)
    * Simple theme, [jwm](https://joewing.net/projects/jwm/) as window manager
-   * No graphic cards support, must be manually select and install
+   * No graphic cards support, install manually
    * Static release
    * Uses Squashfs filesystem
    * Slow upgrade speed
