@@ -378,7 +378,9 @@ default_mount_handler() {
     sfsroot_mounted=0;
     data_mounted=0;
     overlay_mounted=0;
+    overlay_roimg=""
     overlay_chrooted=0;
+    postinstall_mounted=0;
     finerr=1;
     i=0;
     while [ "$i" -le 5 ]; do
@@ -399,6 +401,18 @@ default_mount_handler() {
             continue;
         fi
         data_mounted=1;
+        if [ "$postinstall_mounted" -ne 1 ]; then
+            for pi in $(ls /cdrom/pi/*.sfs); do
+                if [ ! -d /pi/${pi%.sfs} ]; then
+                    if ! mount -m -t squashfs -o ro "/cdrom/pi/$pi" /pi/${pi%.sfs}; then
+                        call_err "Failed to mount /cdrom/pi/$pi on /pi/${pi%.sfs}! Maybe the disk image $pi is missing.";
+                        continue;
+                    fi
+                    overlay_roimg+=":/pi/${pi%.sfs}";
+                fi
+            done
+        fi
+        postinstall_mounted=1;
         if [ ! -z "$overlay" ]; then
             if [ "$overlay_mounted" -ne 1 ] && ! mount ${overlayfstype:+-t $overlayfstype} ${overlayflags:+-o $overlayflags} "$overlay" /overlay;then
                 call_err "Failed to mount $overlay on /overlay!";
@@ -407,12 +421,17 @@ default_mount_handler() {
             overlay_mounted=0;
             [ ! -d /overlay/rw ] && mkdir /overlay/rw;
             [ ! -d /overlay/wk ] && mkdir /overlay/wk;
-            if [ "$overlay_chrooted" -ne 1 ] && ! mount -t overlay overlay -o lowerdir=$1:/data,upperdir=/overlay/rw,workdir=/overlay/wk "$1"; then
+            if [ "$overlay_chrooted" -ne 1 ] && ! mount -t overlay overlay -o lowerdir=$1:/data$overlay_roimg,upperdir=/overlay/rw,workdir=/overlay/wk "$1"; then
                 call_err "Failed to mount overlay filesystem!";
                 continue;
             fi
             overlay_chrooted=1;
         else
+            if [ "$overlay_chrooted" -ne 1 ] && ! mount -t overlay overlay -o lowerdir=$1$overlay_roimg "$1"; then
+                call_err "Failed to mount pi filesystem!";
+                continue;
+            fi
+            overlay_chrooted=1;
             mount --bind /data/var "$1"/var;
         fi
         mount --bind /cdrom "$1"/cdrom;

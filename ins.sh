@@ -6,9 +6,8 @@ net=0
 nct=0
 lm=0
 
-workdir=$(pwd)
-
 bt="ExtOS-respin Installer"
+tt="Installing progress"
 
 netdone=""
 keydone=""
@@ -19,6 +18,8 @@ pttdone=""
 osdone=""
 
 mntlst=("")
+
+sfsserverurl="https://example.com"
 
 init() {
     case $(lscpu | grep Arch | awk '{print $2}') in
@@ -32,7 +33,7 @@ init() {
     else
         cmos=""
     fi
-    if wget -q --spider http://archlinux.org || nc -zw1 archlinux.org 80; then
+    if curl -I http://archlinux.org || wget -q --spider http://archlinux.org || nc -zw1 archlinux.org 80; then
         net=2
         nct=0
         netdone="*"
@@ -46,20 +47,20 @@ init() {
         netcheck
     fi
 }
+
 dircheck() {
     if [ $net -eq  2 ]; then
-        if [ -d ~/esi ]; then
-            cd ~/esi
-        elif [ -d ./esi ]; then
-            cd ./esi
-        elif [ -d ../esi ]; then
-            cd ../esi
+        workdir=$(find / -type d -iname "esi" 2>/dev/null | head -1)
+        if [ ! -z $workdir ]; then
+            cd $workdir
         else
             git clone https://github.com/shadichy/esi.git
             cd ./esi
+            workdir=$(pwd)
         fi
     fi
 }
+
 netcheck() {
     if [ $net -eq 0 ]; then
         clear
@@ -85,6 +86,7 @@ netcheck() {
         init
     fi
 }
+
 keymapc() {
     while true; do
         KEYMAP=$(dialog --backtitle "$bt" --title "Set the Keyboard Layout" --nocancel --default-item "us" --menu "Select a keymap that corresponds to your keyboard layout. Choose 'other' if your keymap is not listed. If you are unsure, the default is 'us' (United States/QWERTY).\n\nKeymap:" 0 0 0 \
@@ -124,6 +126,7 @@ keymapc() {
     loadkeys "$KEYMAP"
     keydone="*"
 }
+
 localec() {
     while true; do
         LOCALE=$(dialog --backtitle "$bt" --title "Set the System Locale" --nocancel --default-item "en_US.UTF-8" --menu "Select a locale that corresponds to your language and region. The locale you select will define the language used by the system and other region specific information. Choose 'other' if your language and/or region is not listed. If you are unsure, the default is 'en_US.UTF-8'.\n\nLocale:" 0 0 0 \
@@ -159,6 +162,7 @@ localec() {
     done
     locdone="*"
 }
+
 localtz() {
     utc_enabled=true
     regions=()
@@ -208,6 +212,7 @@ localtz() {
     fi
     tzcdone="*"
 }
+
 usrname() {
     usrtt="User Configurations"
     while true; do
@@ -503,7 +508,6 @@ disksel() {
 }
 
 ossel() {
-    tt="Installing progress"
     while true; do
         osbs=$(dialog --backtitle "$bt" --title "$tt" --stdout --cancel-label "Exit to menu" --menu "Choose based distro" 0 0 0 \
         "Arch" "Arch Linux based ExtOS full installation" \
@@ -604,21 +608,7 @@ pisel() {
                         echo $pkglist > pkglist
                     fi
                 fi
-
-                if [ -z "$(printf "%s\n" "$piscript" | grep -w "encrypted")" ]; then
-                        osdone="*"
-                        break
-                fi
-                while true; do
-                    ecryptpass=$(dialog --backtitle "$bt" --title "$tt" --stdout --inputbox "Please enter the encryption passphrase:" 0 0)
-                    if [ $? -eq 0 ]; then
-                        osdone="*"
-                        break
-                    fi
-                    if [ -z $ecryptpass ]; then
-                        dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: You didn't entered the encryption passphrase!"
-                    fi
-                done
+                break
                 ;;
             1)
                 break
@@ -634,9 +624,13 @@ pisel() {
     done
 }
 
+mount_part() {
+    mount -m "$1" "/mnt$2"
+}
+
 start_install(){
     # confirming all the choices made and starting the installation
-    if dialog --backtitle "$bt" --title "Confirmation" --yesno "You have selected these:\n\n\
+    if ! dialog --backtitle "$bt" --title "Confirmation" --yesno "You have selected these:\n\n\
     Base: $osbs\n\
     Init system: $initype\n\
     Libc: $libctype\n\
@@ -646,9 +640,125 @@ start_install(){
     $(printf "\t%s\n" "${mntlst[@]}")\n\
     \n\
     Do you want to continue?"; then
-        echo start
-    else
         ossel
+        return
+    fi
+    # mount the partition with mountpoint "/" from mntlst array to /mnt, mkdir boot,boot/efi,home,etc,var,tmp,usr,opt,srv,mnt,proc,sys,dev,run in /mnt, then mount other partitions in /mnt/mntlst array
+    # if encrypted, encrypt the partitions listed in mntlst array, except /boot
+    if [ "$piscript" == "*encrypted*" ]; then
+        for mnt in "$(printf '%s\n' "${mntlst[@]}" | grep -v "/boot" | awk '{print $1}')"; do
+            while true; do
+                psk=$(dialog --backtitle "$bt" --title "Encryption password" --stdout --passwordbox "Enter a password for $mnt" 0 0)
+                if [ $? -ne 0 ]; then
+                    start_install
+                    return
+                fi
+                if [ -z "$psk" ]; then
+                    dialog --backtitle "$bt" --title "Error" --msgbox "Password cannot be empty" 0 0
+                    continue
+                fi
+                break
+            done
+            cryptsetup luksFormat -c aes-xts-plain64 -s 512 -h sha512 -i 5000 -d "$psk" "$mnt"
+            if [ $? -ne 0 ]; then
+                dialog --backtitle "$bt" --title "Error" --msgbox "Error while encrypting $mnt" 0 0
+                start_install
+                return
+            fi
+            # mount the encrypted partition
+            echo $psk | cryptsetup luksOpen "$mnt" "$mnt"
+            if [ $? -ne 0 ]; then
+                dialog --backtitle "$bt" --title "Error" --msgbox "Error while opening $mnt" 0 0
+                start_install
+                return
+            fi
+            # format the partition
+            mkfs.ext4 -L "$mnt"
+            if [ $? -ne 0 ]; then
+                dialog --backtitle "$bt" --title "Error" --msgbox "Error while formatting $mnt" 0 0
+                start_install
+                return
+            fi
+        done
+    fi
+    mount_part $(printf '%s\n' "${mntlst[@]}" | grep -w "/")
+    if [ $? -ne 0 ]; then
+        dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to mount the root partition!"
+        menusel
+        return
+    fi
+    for i in "${mntlst[@]}"; do
+        if [ ! -z "$(echo $i | grep -w "/")" ]; then
+            continue
+        fi
+        mount_part $i
+        if [ $? -ne 0 ]; then
+            dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to mount the $i partition!"
+            menusel
+            return
+        fi
+    done
+
+    # download root-$osbs-$initype-$libctype.sfs image from $sfsserverurl to /mnt/rootfs.sfs
+    # using curl or wget
+    if ! curl -L -o /mnt/rootfs.sfs "$sfsserverurl/root-$osbs-$initype-$libctype-$arct.sfs" || ! wget -O /mnt/rootfs.sfs "$sfsserverurl/root-$osbs-$initype-$libctype-$arct.sfs"; then
+        dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to download the rootfs image!"
+        menusel
+        return
+    fi
+    # download post-install images from $sfsserverurl to /mnt/pi/<name of the image>.sfs
+    # using curl or wget
+    for pi in "${piscript[@]}"; do
+        if [ $pi = "custom" ]; then
+            continue
+        fi
+        if ! curl -L -o /mnt/pi/$pi.sfs "$sfsserverurl/pi/$pi.sfs" || ! wget -O /mnt/pi/$pi.sfs "$sfsserverurl/pi/$pi.sfs"; then
+            dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to download the $pi image!"
+            menusel
+            return
+        fi
+    done
+    # if $osbs is not equal to "sfs", unpack the rootfs image to /mnt/
+    if [ "$osbs" != "sfs" ]; then
+        if ! unsquashfs -f -d /mnt /mnt/rootfs.sfs; then
+            dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to unpack the rootfs image!"
+            menusel
+            return
+        fi
+        # unpack the post-install images to /mnt
+        for pi in "${piscript[@]}"; do
+            if [ $pi = "custom" ]; then
+                continue
+            fi
+            if ! unsquashfs -f -d /mnt /mnt/pi/$pi.sfs; then
+                dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to unpack the $pi image!"
+                menusel
+                return
+            fi
+        done
+    else
+        # if $osbs is equal to "sfs", download data-$arct.img from $sfsserverurl to /mnt/data.img
+        if ! curl -L -o /mnt/data.img "$sfsserverurl/data-$arct.img" || ! wget -O /mnt/data.img "$sfsserverurl/data-$arct.img"; then
+            dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to download the data.img image!"
+            menusel
+            return
+        fi
+        # copy preset/0-global/$arct/boot to /mnt/boot
+        cp -r preset/0-global/$arct/boot /mnt/boot
+        # promt user to choose to have overlay enabled or not
+        if dialog --backtitle "$bt" --title "Overlay" --yesno "Do you want to enable overlay?"; then
+            # create overlay.img file, size = size of the partition (using df command) - (2 times size of the rootfs image) - size of the data.img image - size of the post-install images in /mnt/pi
+            dd if=/dev/zero of=/mnt/overlay.img bs=1M count=$(($(df -m /mnt | tail -n 1 | awk '{print $2}') - $(du -m /mnt/rootfs.sfs | awk '{print $1}') - $(du -m /mnt/data.img | awk '{print $1}') - $(du -m /mnt/pi | awk '{print $1}')))
+            # dd if=/dev/zero of=/mnt/overlay.img bs=1M count=$(($(stat -c %s /mnt/rootfs.sfs) - (2 * $(stat -c %s /mnt/rootfs.sfs)) - $(stat -c %s /mnt/data.img) - $(ls -l /mnt/pi | awk '{print $5}' | awk '{s+=$1} END {print s}')))
+            mkfs.ext4 -L overlay /mnt/overlay.img
+            # change boot args "overlay=tmpfs" to "overlay=/cdrom/overlay.img" in /mnt/boot/grub/grub.cfg
+            sed -i "s/overlay=tmpfs/overlay=\/cdrom\/overlay.img/" /mnt/boot/grub/grub.cfg
+            # remove boot args "overlayfstype=tmpfs overlayflags=nodev,nosuid" from /mnt/boot/grub/grub.cfg
+            sed -i "s/overlayfstype=tmpfs overlayflags=nodev,nosuid//" /mnt/boot/grub/grub.cfg
+        else
+            # remove boot args "overlay=tmpfs overlayfstype=tmpfs overlayflags=nodev,nosuid" from /mnt/boot/grub/grub.cfg
+            sed -i "s/overlay=tmpfs overlayfstype=tmpfs overlayflags=nodev,nosuid//" /mnt/boot/grub/grub.cfg
+        fi
     fi
 }
 
