@@ -373,7 +373,7 @@ diskchoose() {
                     break
                 fi
                 ;;
-            "Basic") disksel
+            "Basic") diskman
                 if [ $diskconfirm -eq 1 ]; then
                     break
                 fi ;;
@@ -383,7 +383,7 @@ diskchoose() {
                 printf "Type 'exit' after you have done all the jobs\n"
                 printf "\n"
                 $SHELL
-                disksel
+                diskman
                 if [ $diskconfirm -eq 1 ]; then
                     break
                 fi ;;
@@ -407,7 +407,7 @@ disklst() {
     done
 }
 
-disksel() {
+diskman() {
     disklst
     mntck
     while true; do
@@ -440,12 +440,14 @@ disksel() {
                             mntpt=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Choose mountpoint for $devtype $devdisk:\n\nNote: everything except "/" and "/boot" are optional" 0 0 0 \
                             "/" "This is where the base system will be installed" \
                             "/boot" "Needed for UEFI/LVM(bios/mbr)/encryption" \
-                            "/boot" "(UEFI) EFI System partition" \
-                            "/home" "Userspace data will be saved here" \
-                            "/usr" "App data will be stored here" \
-                            "/etc" "App Configurations will be stored here" \
-                            "/root" "Userspace data for root/admin will be stored here" \
-                            "/var" "Stores app data, must be mounted as read-write" \
+                            "/boot/efi" "(UEFI) EFI System partition" \
+                            "/home" "Userspace data will be saved here (not apply for Frugal Installation)" \
+                            "/usr" "App data will be stored here (not apply for Frugal Installation)" \
+                            "/etc" "App Configurations will be stored here (not apply for Frugal Installation)" \
+                            "/root" "Userspace data for root/admin will be stored here (not apply for Frugal Installation)" \
+                            "/var" "Stores app data, must be mounted as read-write (not apply for Frugal Installation)" \
+                            "/data" "(Frugal only) Data partition, the same as '/var' partition in normal installation" \
+                            "/overlay" "(Frugal only) Overlay partition, for storing overlay data" \
                             "swap" "Virtual memory partition" )
                             if [ $? -ne 0 ]; then
                                 break
@@ -526,10 +528,11 @@ ossel() {
         else
             arct="i386" # Uses i686 instead
         fi
+        picustom="\"custom\" \"Customize your own preset\" off"
         case $osbs in
             "Arch") osbs="arch" ;;
             "Debian") osbs="deb" ;;
-            "Frugal") osbs="sfs" ;;
+            "Frugal") osbs="sfs"; picustom="" ;;
         esac
         initsel
         if [ ! -z "$osdone" ]; then
@@ -589,7 +592,7 @@ pisel() {
         "office" "Suit for office work, with many useful softwares" off \
         "devel" "Developing enviroment for coders/developers" off \
         "server" "Tools and utilities for a mini host server" off \
-        "custom" "Customize your own preset" off)
+        $picustom)
         case $? in
             0)
                 # cat pkglist-<base distro> from ./preset/<post-install options> folder to pkglist (if there are any duplicates, remove them)
@@ -687,17 +690,6 @@ start_install(){
         menusel
         return
     fi
-    for i in "${mntlst[@]}"; do
-        if [ ! -z "$(echo $i | grep -w "/")" ]; then
-            continue
-        fi
-        mount_part $i
-        if [ $? -ne 0 ]; then
-            dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to mount the $i partition!"
-            menusel
-            return
-        fi
-    done
 
     # download root-$osbs-$initype-$libctype.sfs image from $sfsserverurl to /mnt/rootfs.sfs
     # using curl or wget
@@ -720,22 +712,43 @@ start_install(){
     done
     # if $osbs is not equal to "sfs", unpack the rootfs image to /mnt/
     if [ "$osbs" != "sfs" ]; then
+        for i in $(printf '%s\n' "${mntlst[@]}" | grep -Evw "/|/data|/overlay|swap"); do
+            mount_part $i
+            if [ $? -ne 0 ]; then
+                dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to mount the $i partition!"
+                menusel
+                return
+            fi
+        done
         if ! unsquashfs -f -d /mnt /mnt/rootfs.sfs; then
             dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to unpack the rootfs image!"
             menusel
             return
         fi
-        # unpack the post-install images to /mnt
-        for pi in "${piscript[@]}"; do
-            if [ $pi = "custom" ]; then
-                continue
+        # if piscript doesn't contain "custom", unpack the post-install images to /mnt, else, copy the preset configuations from preset/<preset>/<arch>/ to /mnt
+        if ! echo "${piscript[@]}" | grep -q "custom"; then
+            for pi in "${piscript[@]}"; do
+                if ! unsquashfs -f -d /mnt /mnt/pi/$pi.sfs; then
+                    dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to unpack the $pi image!"
+                    menusel
+                    return
+                fi
+            done
+        else
+            for pi in "${piscript[@]}"; do
+                if [ $pi = "custom" ]; then
+                    continue
+                fi
+                cp -r preset/$pi/$arct/* /mnt
+            done
+            # chroot into /mnt and install packages listed in pkglist file (if $osbs is "deb", use apt, if $osbs is "arch", use pacman)
+            if [ "$osbs" == "deb" ]; then
+                chroot /mnt apt-get update
+                chroot /mnt xargs apt-get -y install < pkglist
+            elif [ "$osbs" == "arch" ]; then
+                chroot /mnt pacman -S - < pkglist
             fi
-            if ! unsquashfs -f -d /mnt /mnt/pi/$pi.sfs; then
-                dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to unpack the $pi image!"
-                menusel
-                return
-            fi
-        done
+        fi
     else
         # if $osbs is equal to "sfs", download data-$arct.img from $sfsserverurl to /mnt/data.img
         if ! curl -L -o /mnt/data.img "$sfsserverurl/data-$arct.img" || ! wget -O /mnt/data.img "$sfsserverurl/data-$arct.img"; then
@@ -743,16 +756,28 @@ start_install(){
             menusel
             return
         fi
+        external_data=$(printf '%s\n' "${mntlst[@]}" | grep -w "/data")
+        if [ -n "$external_data" ]; then
+            external_data_dev=$(echo $external_data | awk '{print $1}')
+            dd if=/mnt/data.img of=$external_data_dev bs=4M
+            # change boot args "data=/cdrom/data.img" to "data=$external_data_dev" in /mnt/boot/grub/grub.cfg
+            sed -i "s/data=\/cdrom\/data.img/data=$external_data_dev/g" /mnt/boot/grub/grub.cfg
+        fi
         # copy preset/0-global/$arct/boot to /mnt/boot
         cp -r preset/0-global/$arct/boot /mnt/boot
         # promt user to choose to have overlay enabled or not
         if dialog --backtitle "$bt" --title "Overlay" --yesno "Do you want to enable overlay?"; then
             # create overlay.img file, size = size of the partition (using df command) - (2 times size of the rootfs image) - size of the data.img image - size of the post-install images in /mnt/pi
-            dd if=/dev/zero of=/mnt/overlay.img bs=1M count=$(($(df -m /mnt | tail -n 1 | awk '{print $2}') - $(du -m /mnt/rootfs.sfs | awk '{print $1}') - $(du -m /mnt/data.img | awk '{print $1}') - $(du -m /mnt/pi | awk '{print $1}')))
-            # dd if=/dev/zero of=/mnt/overlay.img bs=1M count=$(($(stat -c %s /mnt/rootfs.sfs) - (2 * $(stat -c %s /mnt/rootfs.sfs)) - $(stat -c %s /mnt/data.img) - $(ls -l /mnt/pi | awk '{print $5}' | awk '{s+=$1} END {print s}')))
-            mkfs.ext4 -L overlay /mnt/overlay.img
+            external_overlay=$(printf '%s\n' "${mntlst[@]}" | grep -w "/overlay")
+            if [ -n "$external_overlay" ]; then
+                overlay_dev=$(echo $external_overlay | awk '{print $1}')
+            else
+                overlay_dev=/mnt/overlay.img
+                dd if=/dev/zero of=$overlay_dev bs=1M count=$(($(df -m /mnt | tail -n 1 | awk '{print $2}') - $(du -m /mnt/rootfs.sfs | awk '{print $1}') - $(du -m /mnt/data.img | awk '{print $1}') - $(du -m /mnt/pi | awk '{print $1}')))
+            fi
+            mkfs.ext4 -L overlay $overlay_dev
             # change boot args "overlay=tmpfs" to "overlay=/cdrom/overlay.img" in /mnt/boot/grub/grub.cfg
-            sed -i "s/overlay=tmpfs/overlay=\/cdrom\/overlay.img/" /mnt/boot/grub/grub.cfg
+            sed -i "s/overlay=tmpfs/overlay=$overlay_dev/" /mnt/boot/grub/grub.cfg
             # remove boot args "overlayfstype=tmpfs overlayflags=nodev,nosuid" from /mnt/boot/grub/grub.cfg
             sed -i "s/overlayfstype=tmpfs overlayflags=nodev,nosuid//" /mnt/boot/grub/grub.cfg
         else
@@ -760,6 +785,22 @@ start_install(){
             sed -i "s/overlay=tmpfs overlayfstype=tmpfs overlayflags=nodev,nosuid//" /mnt/boot/grub/grub.cfg
         fi
     fi
+    # is it finished?
+    dialog --backtitle "$bt" --title "Finished" --extra-button --extra-label "Other" --yesno "Do you want to reboot?"
+    case $? in
+        0)
+            # if user choose to reboot, reboot
+            reboot
+            ;;
+        1)
+            # if user choose to continue, return to menusel
+            menusel
+            ;;
+        3)
+            # if user choose "Other", open power menu
+            poweropts
+            ;;
+    esac
 }
 
 poweropts() {
