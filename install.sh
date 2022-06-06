@@ -5,6 +5,7 @@ label="EXTOS"
 net=0
 nct=0
 lm=0
+diskconfirm=0
 
 bt="ExtOS-respin Installer"
 tt="Installing progress"
@@ -29,9 +30,9 @@ init() {
         exit 1 ;;
     esac
     if [ -d /sys/firmware/efi ]; then
-        cmos="efi" 
+        cmos="uefi" 
     else
-        cmos=""
+        cmos="bios"
     fi
     if curl -I http://archlinux.org || wget -q --spider http://archlinux.org || nc -zw1 archlinux.org 80; then
         net=2
@@ -69,7 +70,7 @@ netcheck() {
         printf "\n"
         printf "\e[1;32mQuick guide:\n"
         printf "\n"
-        printf "\e[1;33m  (For more 'space': Press Ctrl + Alt + F2 switching to TTY2 (Ctrl + Alt + F1 to get back) or open a new terminal)\n"
+        printf "\e[1;33m  (For more 'space': Press Ctrl + Alt + F2 switching to TTY2 (Ctrl + Alt + F1 to get back) or open a new terminal window/tab/session(tmux))\n"
         printf "\n\e[1;36m"
         printf "    Run command 'ip link' to check enabled network interfaces\n"
         printf "    Run command 'rfkill list all' to list blocked network card and 'rfkill unblock all' to unblock all Soft-blocked network card\n"
@@ -276,17 +277,18 @@ usrname() {
 }
 
 mntck() {
-    for dir in $(ls -A /mnt); do
-        if mountpoint -q $dir; then
-            umount -R $dir
-        fi
-    done
-    if mountpoint -q /mnt; then
-        umount -R /mnt
-    fi
-    if free | awk '/^Swap:/ {exit !$2}'; then
-        swapoff -a
-    fi
+    # for dir in $(ls -A /mnt); do
+    #     if mountpoint -q $dir; then
+    #         umount -R $dir
+    #     fi
+    # done
+    # if mountpoint -q /mnt; then
+    #     umount -R /mnt
+    # fi
+    # if free | awk '/^Swap:/ {exit !$2}'; then
+    #     swapoff -a
+    # fi
+    echo unmounted
 }
 
 diskchoose() {
@@ -310,16 +312,16 @@ diskchoose() {
                         *) continue ;;
                     esac
                     create_part() {
-                        for f in $(printf "fix\n" | parted ---pretend-input-tty $d unit B print free | grep "Free Space"); do
-                            part_size=$(printf $f | awk '{print $3}')
-                            if [ ${part_size%B} -ge 4194304 ]; then
+                        while IFS= read -r f; do
+                            part_size=$(echo $f | awk '{print $3}')
+                            if (( $(echo "${part_size%MiB} >= 4096" |bc -l) )); then
                                 part_start=$(printf $f | awk '{print $1}')
                                 part_end=$(printf $f | awk '{print $2}')
                                 part_table_before=( "$(lsblk -n -p -r -e 7,11,251 -o NAME $d)" )
-                                printf "fix\n" | parted ---pretend-input-tty $d mkpart $part_type ext4 $part_start $part_size
-                                if [ $? -ne 0 ]; then
-                                    continue
-                                fi
+                                # printf "fix\n" | parted ---pretend-input-tty $d mkpart $part_type ext4 $part_start $part_size
+                                # if [ $? -ne 0 ]; then
+                                #     continue
+                                # fi
                                 part_table_after=( "$(lsblk -n -p -r -e 7,11,251 -o NAME $d)" )
                                 part_id=$(echo ${part_table_before[@]} ${part_table_after[@]} | tr ' ' '\n' | sort | uniq -u)
                                 if [ $ptb = "msdos" ]; then
@@ -328,17 +330,17 @@ diskchoose() {
                                         continue
                                     fi
                                 fi
-                                e2label $part_id $label
-                                e2fsck -f $part_id
+                                # e2label $part_id $label
+                                # e2fsck -f $part_id
                                 mntlst=( "$part_id /" )
+                                diskconfirm=1
                             fi
-                        done
+                        done <<< "$(printf "fix\n" | parted ---pretend-input-tty $d unit MiB print free | grep "Free Space")"
                     }
                     create_part
                     if [ ! -z $(printf '%s\n' "${mntlst[@]}" | grep -w "/" | awk '{print $2}') ]; then
                         break
                     fi
-                    # mount every single partition, check for its free space, if it's bigger than 4GB, then shrink it and free 4GB for the new root partition
                     for p in $(lsblk -n -p -r -e 7,11,251 -o NAME $d | grep -vw $d); do
                         part_kind=$(lsblk -d -n -r -o TYPE $p)
                         if [ $part_kind = "crypt" ]; then
@@ -347,40 +349,65 @@ diskchoose() {
                         if [ $part_kind = "lvm" ]; then
                             continue
                         fi
-                        if ! mount $p /mnt; then
-                            continue
-                        fi
+                        # if ! mount $p /mnt; then
+                        #     continue
+                        # fi
                         if [ $(df -m --output=avail /mnt | grep -v "Avail") -lt 4096 ]; then
-                            umount /mnt
+                            echo 0
+                            # umount /mnt
                             continue
                         fi
-                        # shrink the partition and free up 4gb
-                        umount /mnt
-                        printf "fix\n" | parted ---pretend-input-tty $p resizepart 1 $(( ${(printf "fix\n" | parted ---pretend-input-tty $p unit MiB print | grep -w "1" | awk '{print $3}')%MiB} - 4096 ))
-                        if [ $? -ne 0 ]; then
-                            continue
-                        fi
+                        # umount /mnt
+                        # printf "fix\n" | parted ---pretend-input-tty $p resizepart 1 $(( ${(printf "fix\n" | parted ---pretend-input-tty $p unit MiB print | grep -w "1" | awk '{print $3}')%MiB} - 4096 ))
+                        # if [ $? -ne 0 ]; then
+                        #     continue
+                        # fi
                         create_part
-                        if [ ! -z $(printf '%s\n' "${mntlst[@]}" | grep -w "/" | awk '{print $2}') ]; then
+                        if [ diskconfirm -eq 1 ]; then
                             break
                         fi
                     done
-                    if [ ! -z $(printf '%s\n' "${mntlst[@]}" | grep -w "/" | awk '{print $2}') ]; then
+                    if [ diskconfirm -eq 1 ]; then
                         break
                     fi
                 done
-                if [ ! -z $(printf '%s\n' "${mntlst[@]}" | grep -w "/" | awk '{print $2}') ]; then
+                if [ diskconfirm -eq 1 ]; then
                     break
                 fi
                 ;;
-            "Basic") diskman
+            "Basic") simplediskman
                 if [ $diskconfirm -eq 1 ]; then
                     break
                 fi ;;
-            "Manual") clear
-                printf "Use 'fdisk', 'cfdisk', 'parted' commands or any CLI-based disk utilities to edit the disks/partitions\n"
+            "Manual")
+                dialog --backtitle "$bt" --title "Manual partitioning" --yes-label "Use Terminal interface" --no-label "Use Command line interface" --yesno "Would you like to use the terminal interface or the command line interface?" 0 0
+                if [ $? -eq 0];then
+                    diskman
+                    if [ $diskconfirm -eq 1 ]; then
+                        break
+                    fi
+                fi
+                clear
                 printf "\n"
-                printf "Type 'exit' after you have done all the jobs\n"
+                printf "\n"
+                printf "\e[1;32mQuick guide:\n"
+                printf "\n"
+                printf "\e[1;33m### Physical Disk/Partition Management ###\e[0m\n"
+                printf "\n\e[1;36m"
+                printf "    Use 'lsblk' to see the list of disks/partitions.\n\n"
+                printf "    Use 'fdisk', 'cfdisk', 'parted' commands or any CLI-based disk utilities to manage disks/partitions\n"
+                printf "\n"
+                printf "\e[1;33m### Logical Volume Management ###\e[0m\n"
+                printf "\n\e[1;36m"
+                printf "    Use pvdisplay, pvcreate, pvremove commands to manage physical volumes\n"
+                printf "    Use vgdisplay, vgcreate, vgremove commands to manage volume groups\n"
+                printf "    Use lvdisplay, lvcreate, lvremove commands to manage logical volumes\n"
+                printf "\n"
+                printf "\e[1;33m### Encrypted Volume Management ###\e[0m\n"
+                printf "\n\e[1;36m"
+                printf "    Use cryptsetup commands to manage encrypted volumes\n"
+                printf "\n"
+                printf "\e[0mType 'exit' after you have done all the jobs\n"
                 printf "\n"
                 $SHELL
                 diskman
@@ -406,6 +433,132 @@ disklst() {
         devs+=("$dev"$'\t'"" "$devtp"$'\t'"$devfs"$'\t'"$devsz"$'\t'"$devmp")
     done
 }
+simplediskman() {
+    disklst
+    mntck
+    while true; do
+        if [ ${#devs[@]} -eq 0 ]; then
+            dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "No device is available to install" 0 0
+            break
+        fi
+        devdisk=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --ok-label "Select" --stdout --menu "Select the disk/partition for ExtOS to be installed on. Note that the disk/partition you select will be erased, but not until you have confirmed the changes.\n\nSelect the disk in the list below:" 0 80 0 "${devs[@]}")
+        if [ $? -ne 0 ]; then
+            break
+        fi
+        devtype=$(lsblk -d -n -r -o TYPE $devdisk)
+        if [ $devtype == "disk" ]; then
+            dorpb="entire disk"
+        else
+            dorpb="partition"
+        fi
+        dialog --backtitle "$bt" --title "Confirm install on $devdisk" --yes-label "Confirm" --no-label "Back" --yesno "Are you sure you want to install ExtOS on the $dorpb $devdisk?\n\nThis will erase all data on the $devdisk, and cannot be undone." 0 0
+        if [ $? -ne 0 ]; then
+            continue
+        fi
+        case $devtype in
+            "part")
+                dialog --backtitle "$bt" --title "Formatting $devdisk" --infobox "Formatting $devdisk as ext4" 0 0
+                # mkfs.ext4 -F -L EXTOS $devdisk
+                # if [ $? -ne 0 ]; then
+                #     dialog --backtitle "$bt" --title "Formatting $devdisk" --msgbox "Failed to format $devdisk" 0 0
+                #     continue
+                # fi
+                mntlst+=("$devdisk /")
+                flagasboot() {
+                    # parted -s $devdisk set 1 boot on
+                    # if [ $? -ne 0 ]; then
+                    #     dialog --backtitle "$bt" --title "Formatting $devdisk" --msgbox "Failed to set $devdisk as bootable" 0 0
+                    #     continue
+                    # fi
+                    echo "flagasboot"
+                }
+                case $cmos in
+                    "uefi")
+                        espdev=$(lsblk -o NAME,LABEL,PARTLABEL | grep -w "EFI" | awk '{print $1}')
+                        if [ -z "$espdev" ]; then
+                            flagasboot
+                        else
+                            mntlst+=("$espdev /boot/efi")
+                        fi ;;
+                    "bios") flagasboot ;;
+                esac
+                ;;
+            "disk")
+                case $cmos in
+                    "uefi")
+                        dialog --backtitle "$bt" --title "Formatting $devdisk" --infobox "Creating GPT partition table on $devdisk" 0 0
+                        # parted -s $devdisk mklabel gpt
+                        # if [ $? -ne 0 ]; then
+                        #     dialog --backtitle "$bt" --title "Formatting $devdisk" --msgbox "Failed to create GPT partition table on $devdisk" 0 0
+                        #     continue
+                        # fi
+                        dialog --backtitle "$bt" --title "Formatting $devdisk" --infobox "Creating EFI system partition" 0 0
+                        # parted -s $devdisk mkpart EFI_EXTOS fat32 1 100M
+                        # if [ $? -ne 0 ]; then
+                        #     dialog --backtitle "$bt" --title "Formatting $devdisk" --msgbox "Failed to create EFI system partition on $devdisk" 0 0
+                        #     continue
+                        # fi
+                        dialog --backtitle "$bt" --title "Formatting $devdisk" --infobox "Formatting EFI system partition as fat32" 0 0
+                        # mkfs.fat -F32 -n EFI /dev/disk/by-partlabel/EFI_EXTOS
+                        # if [ $? -ne 0 ]; then
+                        #     dialog --backtitle "$bt" --title "Formatting $devdisk" --msgbox "Failed to format EFI system partition as fat32" 0 0
+                        #     continue
+                        # fi
+                        # parted -s /dev/disk/by-partlabel/EFI_EXTOS set 1 boot on
+                        # if [ $? -ne 0 ]; then
+                        #     dialog --backtitle "$bt" --title "Formatting $devdisk" --msgbox "Failed to set EFI system partition as bootable" 0 0
+                        #     continue
+                        # fi
+                        # parted -s /dev/disk/by-partlabel/EFI_EXTOS set 1 esp on
+                        # if [ $? -ne 0 ]; then
+                        #     dialog --backtitle "$bt" --title "Formatting $devdisk" --msgbox "Failed to set EFI system partition as ESP" 0 0
+                        #     continue
+                        # fi
+                        mntlst+=("/dev/disk/by-partlabel/EFI_EXTOS /boot/efi")
+                        dialog --backtitle "$bt" --title "Formatting $devdisk" --infobox "Creating partition to install ExtOS" 0 0
+                        # parted -s $devdisk mkpart EXTOS ext4 101M 100%
+                        # if [ $? -ne 0 ]; then
+                        #     dialog --backtitle "$bt" --title "Formatting $devdisk" --msgbox "Failed to create partition on $devdisk" 0 0
+                        #     continue
+                        # fi
+                        dialog --backtitle "$bt" --title "Formatting $devdisk" --infobox "Formatting $devdisk as ext4" 0 0
+                        # mkfs.ext4 -F -L EXTOS /dev/disk/by-partlabel/EXTOS
+                        # if [ $? -ne 0 ]; then
+                        #     dialog --backtitle "$bt" --title "Formatting $devdisk" --msgbox "Failed to format $devdisk" 0 0
+                        #     continue
+                        # fi
+                        mntlst+=("/dev/disk/by-partlabel/EXTOS /")
+                        ;;
+                    "bios")
+                        dialog --backtitle "$bt" --title "Formatting $devdisk" --infobox "Formatting $devdisk as msdos" 0 0
+                        # parted -s $devdisk mklabel msdos
+                        # if [ $? -ne 0 ]; then
+                        #     dialog --backtitle "$bt" --title "Formatting $devdisk" --msgbox "Failed to format $devdisk" 0 0
+                        #     continue
+                        # fi
+                        dialog --backtitle "$bt" --title "Formatting $devdisk" --infobox "Creating partition for rootfs" 0 0
+                        # parted -s $devdisk mkpart primary ext4 100%
+                        # if [ $? -ne 0 ]; then
+                        #     dialog --backtitle "$bt" --title "Formatting $devdisk" --msgbox "Failed to create partition on $devdisk" 0 0
+                        #     continue
+                        # fi
+                        pdev=$(lsblk -n -r -p -o NAME $devdisk | grep -vw "$devdisk")
+                        dialog --backtitle "$bt" --title "Formatting $devdisk" --infobox "Formatting $pdev as ext4" 0 0
+                        # mkfs.ext4 -F -L EXTOS $pdev
+                        # if [ $? -ne 0 ]; then
+                        #     dialog --backtitle "$bt" --title "Formatting $devdisk" --msgbox "Failed to format $pdev" 0 0
+                        #     continue
+                        # fi
+                        mntlst+=("$pdev /")
+                        ;;
+                esac
+                ;;
+        esac
+        diskconfirm=1
+        pttdone="*"
+        break
+    done
+}
 
 diskman() {
     disklst
@@ -429,14 +582,21 @@ diskman() {
                 while true; do
                     cryptopt=""
                     if [ $devtype == "crypt" ]; then
-                        cryptopt="3 \"Mount Encrypted\""
+                        cryptopt="\"Decrypt\" \"Mount Encrypted\""
                     fi
-                    mntopts=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "${devtype^^} $devdisk\n    Type: $devtype\n    $dorpa\n    Size: $(lsblk -d -n -r -o SIZE $devdisk)\n    In use: none\n\nChoose an action:" 0 0 0 1 "Use$dorpb as " 2 "Format" $cryptopt)
+                    if [ $devtype == "lvm" ] || [ $devtype == "disk" ]; then
+                        cryptopt="\"Manage\" \"Manage Volumes/Partitions\""
+                    fi
+                    mntopts=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "${devtype^^} $devdisk\n    Type: $devtype\n    $dorpa\n    Size: $(lsblk -d -n -r -o SIZE $devdisk)\n    In use: none\n\nChoose an action:" 0 0 0 \
+                    "Mountpoint" "Use$dorpb as " \
+                    "Format" "Format/Erase/Change filesystem of$dorpb" \
+                    $cryptopt \
+                    $lvmopt)
                     if [ $? -ne 0 ]; then
                         break
                     fi
                     case $mntopts in
-                        1) while true; do
+                        "Mountpoint") while true; do
                             mntpt=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Choose mountpoint for $devtype $devdisk:\n\nNote: everything except "/" and "/boot" are optional" 0 0 0 \
                             "/" "This is where the base system will be installed" \
                             "/boot" "Needed for UEFI/LVM(bios/mbr)/encryption" \
@@ -470,29 +630,138 @@ diskman() {
                             disklst
                             break
                         done ;;
-                        2) fsformat=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Please select the filesystem to be formated on $devdisk" 0 0 0 \
+                        "Format") fsformat=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Please select the filesystem to be formated on $devdisk" 0 0 0 \
                         "Ext2" "Standard Extended Filesystem for Linux version 2" \
                         "Ext3" "Ext2 with journaling" \
                         "Ext4" "Latest version of Extended Filesystem improved" \
-                        "FAT32" "Compatible, highly usable filesystem" \
+                        "BTRFS" "Filesystem for storing and managing large volume of data provided by Btrfs" \
                         "XFS" "High-performance filesystem for server use" \
                         "JFS" "Journaled filesystem by IBM" \
                         "ZFS" "Filesystem for storing and managing large volume of data provided by OpenZFS" \
-                        "NTFS" "Standard Windows filesystem, use for data transfer only (ExtOS Frugal installable)");;
-                        3) while true; do
-                                cryptpass=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --inputbox "$devdisk appears to be an encrypted partition\nIt must be unlocked in order to continue\n\nPlease enter the encryption passphrase:" 0 0)
-                                if [ $? -ne 0 ]; then
-                                    break
-                                fi
-                                if [ -z $cryptpass ]; then
-                                    dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the encryption passphrase!"
-                                fi
-                                if cryptsetup luksOpen $devdisk $devdisk"_crypt" --key-file=-; then
-                                    break
-                                else
-                                    dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: Could not unlock the partition.\n\nPlease check the passphrase and try again."
-                                fi
-                            done ;;
+                        "FAT32" "Compatible, highly usable filesystem for storing data only (ExtOS Frugal installable)" \
+                        "NTFS" "Standard Windows filesystem, use for data transfer only (ExtOS Frugal installable)" \
+                        "LVM" "Logical Volume Manager, useful if you want to have more partitions on the disk that has 'msdos' partition table or when you have multiple disks (with or without RAID)" \
+                        "Encrypted" "Encrypted filesystem, secure your data" \
+                        "Swap" "Virtual memory partition" \
+                        "Unformated" "Unformated partition" );;
+                        "Decrypt") while true; do
+                            cryptpass=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --inputbox "$devdisk appears to be an encrypted partition\nIt must be unlocked in order to continue\n\nPlease enter the encryption passphrase:" 0 0)
+                            if [ $? -ne 0 ]; then
+                                break
+                            fi
+                            if [ -z $cryptpass ]; then
+                                dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the encryption passphrase!"
+                            fi
+                            # if cryptsetup luksOpen $devdisk $devdisk"_crypt" --key-file=-; then
+                            #     break
+                            # else
+                            #     dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: Could not unlock the partition.\n\nPlease check the passphrase and try again."
+                            # fi
+                        done ;;
+                        # "Manage") while true; do
+                        #     case $devtype in
+                        #         "lvm")
+                        #         lvmopt=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Please select the action you want to perform on $devdisk" 0 0 0 \
+                        #         "Create Volume Group" "Create a new Volume Group" \
+                        #         "Create Logical Volume" "Create a new Logical Volume" \
+                        #         "Create Physical Volume" "Create a new Physical Volume" \
+                        #         "Remove Volume Group" "Remove an existing Volume Group" \
+                        #         "Remove Logical Volume" "Remove an existing Logical Volume" \
+                        #         "Remove Physical Volume" "Remove an existing Physical Volume" )
+                        #         if [ $? -ne 0 ]; then
+                        #             break
+                        #         fi
+                        #         case $lvmopt in
+                        #             "Create Volume Group") while true; do
+                        #                 vgname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --inputbox "Please enter the name of the Volume Group:" 0 0)
+                        #                 if [ $? -ne 0 ]; then
+                        #                     break
+                        #                 fi
+                        #                 if [ -z $vgname ]; then
+                        #                     dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the name of the Volume Group!"
+                        #                 fi
+                        #                 if lvcreate -y -V 1G -n $vgname $devdisk; then
+                        #                     break
+                        #                 else
+                        #                     dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: Could not create the Volume Group.\n\nPlease check the name and try again."
+                        #                 fi
+                        #             done ;;
+                        #             "Create Logical Volume") while true; do
+                        #                 vgname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --inputbox "Please enter the name of the Volume Group:" 0 0)
+                        #                 if [ $? -ne 0 ]; then
+                        #                     break
+                        #                 fi
+                        #                 if [ -z $vgname ]; then
+                        #                     dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the name of the Volume Group!"
+                        #                 fi
+                        #                 lvname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --inputbox "Please enter the name of the Logical Volume:" 0 0)
+                        #                 if [ $? -ne 0 ]; then
+                        #                     break
+                        #                 fi
+                        #                 if [ -z $lvname ]; then
+                        #                     dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the name of the Logical Volume!"
+                        #                 fi
+                        #                 if lvcreate -y -V 1G -n $lvname -L $vgname $devdisk; then
+                        #                     break
+                        #                 else
+                        #                     dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: Could not create the Logical Volume.\n\nPlease check the name and try again."
+                        #                 fi
+                        #             done ;;
+                        #             "Remove Volume Group") while true; do
+                        #                 vgname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --inputbox "Please enter the name of the Volume Group:" 0 0)
+                        #                 if [ $? -ne 0 ]; then
+                        #                     break
+                        #                 fi
+                        #                 if [ -z $vgname ]; then
+                        #                     dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the name of the Volume Group!"
+                        #                 fi
+                        #                 if vgremove -y $vgname; then
+                        #                     break
+                        #                 else
+                        #                     dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: Could not remove the Volume Group.\n\nPlease check the name and try again."
+                        #                 fi
+                        #             done ;;
+                        #             "Remove Logical Volume") while true; do
+                        #                 vgname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --inputbox "Please enter the name of the Volume Group:" 0 0)
+                        #                 if [ $? -ne 0 ]; then
+                        #                     break
+                        #                 fi
+                        #                 if [ -z $vgname ]; then
+                        #                     dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the name of the Volume Group!"
+                        #                 fi
+                        #                 lvname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --inputbox "Please enter the name of the Logical Volume:" 0 0)
+                        #                 if [ $? -ne 0 ]; then
+                        #                     break
+                        #                 fi
+                        #                 if [ -z $lvname ]; then
+                        #                     dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the name of the Logical Volume!"
+                        #                 fi
+                        #                 if lvremove -y $vgname/$lvname; then
+                        #                     break
+                        #                 else
+                        #                     dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: Could not remove the Logical Volume.\n\nPlease check the name and try again."
+                        #                 fi
+                        #             done ;;
+                        #             "Remove Physical Volume") while true; do
+                        #                 pvname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --inputbox "Please enter the name of the Physical Volume:" 0 0)
+                        #                 if [ $? -ne 0 ]; then
+                        #                     break
+                        #                 fi
+                        #                 if [ -z $pvname ]; then
+                        #                     dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the name of the Physical Volume!"
+                        #                 fi
+                        #                 if pvremove -y $pvname; then
+                        #                     break
+                        #                 else
+                        #                     dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: Could not remove the Physical Volume.\n\nPlease check the name and try again."
+                        #                 fi
+                        #             done ;;
+                        #         esac ;;
+                        #         "disk") 
+                        #             printf "fix\n" | parted ---pretend-input-tty $devdisk print free | 
+                        #             ;;
+                        #     esac
+                        # done ;;
                     esac
                     break
                 done
@@ -535,6 +804,7 @@ ossel() {
             "Frugal") osbs="sfs"; picustom="" ;;
         esac
         initsel
+        echo $osdone > out
         if [ ! -z "$osdone" ]; then
             break
         fi
@@ -595,22 +865,19 @@ pisel() {
         $picustom)
         case $? in
             0)
-                # cat pkglist-<base distro> from ./preset/<post-install options> folder to pkglist (if there are any duplicates, remove them)
                 for f in $piscript; do
                     if [ -f "preset/$f/$arct/pkglist-$osbs" ]; then
                         cat preset/$f/$arct/pkglist-$osbs >> pkglist
                     fi
                 done
-                # remove duplicates
                 sort -u pkglist -o pkglist
-                # check if custom is selected
                 if [ "$piscript" == "*custom*" ]; then
-                    # open a dialog to edit the pkglist
                     pkglist=$(dialog --backtitle "$bt" --title "Customize your own preset" --stdout --ok-label "Save" --cancel-label "Continue" --editbox "pkglist" 0 0)
                     if [ $? -eq 0 ]; then
                         echo $pkglist > pkglist
                     fi
                 fi
+                osdone="*"
                 break
                 ;;
             1)
@@ -628,11 +895,11 @@ pisel() {
 }
 
 mount_part() {
-    mount -m "$1" "/mnt$2"
+    # mount -m "$1" "/mnt$2"
+    echo "mounted $1 to /mnt$2"
 }
 
 start_install(){
-    # confirming all the choices made and starting the installation
     if ! dialog --backtitle "$bt" --title "Confirmation" --yesno "You have selected these:\n\n\
     Base: $osbs\n\
     Init system: $initype\n\
@@ -642,12 +909,11 @@ start_install(){
     Partition table: \n\
     $(printf "\t%s\n" "${mntlst[@]}")\n\
     \n\
-    Do you want to continue?"; then
+    Do you want to continue?" 0 0; then
         ossel
         return
     fi
-    # mount the partition with mountpoint "/" from mntlst array to /mnt, mkdir boot,boot/efi,home,etc,var,tmp,usr,opt,srv,mnt,proc,sys,dev,run in /mnt, then mount other partitions in /mnt/mntlst array
-    # if encrypted, encrypt the partitions listed in mntlst array, except /boot
+
     if [ "$piscript" == "*encrypted*" ]; then
         for mnt in "$(printf '%s\n' "${mntlst[@]}" | grep -v "/boot" | awk '{print $1}')"; do
             while true; do
@@ -662,28 +928,27 @@ start_install(){
                 fi
                 break
             done
-            cryptsetup luksFormat -c aes-xts-plain64 -s 512 -h sha512 -i 5000 -d "$psk" "$mnt"
-            if [ $? -ne 0 ]; then
-                dialog --backtitle "$bt" --title "Error" --msgbox "Error while encrypting $mnt" 0 0
-                start_install
-                return
-            fi
-            # mount the encrypted partition
-            echo $psk | cryptsetup luksOpen "$mnt" "$mnt"
-            if [ $? -ne 0 ]; then
-                dialog --backtitle "$bt" --title "Error" --msgbox "Error while opening $mnt" 0 0
-                start_install
-                return
-            fi
-            # format the partition
-            mkfs.ext4 -L "$mnt"
-            if [ $? -ne 0 ]; then
-                dialog --backtitle "$bt" --title "Error" --msgbox "Error while formatting $mnt" 0 0
-                start_install
-                return
-            fi
+            # cryptsetup luksFormat -c aes-xts-plain64 -s 512 -h sha512 -i 5000 -d "$psk" "$mnt"
+            # if [ $? -ne 0 ]; then
+            #     dialog --backtitle "$bt" --title "Error" --msgbox "Error while encrypting $mnt" 0 0
+            #     start_install
+            #     return
+            # fi
+            # echo $psk | cryptsetup luksOpen "$mnt" "$mnt"
+            # if [ $? -ne 0 ]; then
+            #     dialog --backtitle "$bt" --title "Error" --msgbox "Error while opening $mnt" 0 0
+            #     start_install
+            #     return
+            # fi
+            # mkfs.ext4 -L "$mnt"
+            # if [ $? -ne 0 ]; then
+            #     dialog --backtitle "$bt" --title "Error" --msgbox "Error while formatting $mnt" 0 0
+            #     start_install
+            #     return
+            # fi
         done
     fi
+
     mount_part $(printf '%s\n' "${mntlst[@]}" | grep -w "/")
     if [ $? -ne 0 ]; then
         dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to mount the root partition!"
@@ -691,26 +956,21 @@ start_install(){
         return
     fi
 
-    # download root-$osbs-$initype-$libctype.sfs image from $sfsserverurl to /mnt/rootfs.sfs
-    # using curl or wget
-    if ! curl -L -o /mnt/rootfs.sfs "$sfsserverurl/root-$osbs-$initype-$libctype-$arct.sfs" || ! wget -O /mnt/rootfs.sfs "$sfsserverurl/root-$osbs-$initype-$libctype-$arct.sfs"; then
-        dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to download the rootfs image!"
-        menusel
-        return
-    fi
-    # download post-install images from $sfsserverurl to /mnt/pi/<name of the image>.sfs
-    # using curl or wget
+    # if ! curl -L -o /mnt/rootfs.sfs "$sfsserverurl/root-$osbs-$initype-$libctype-$arct.sfs" || ! wget -O /mnt/rootfs.sfs "$sfsserverurl/root-$osbs-$initype-$libctype-$arct.sfs"; then
+    #     dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to download the rootfs image!"
+    #     menusel
+    #     return
+    # fi
     for pi in "${piscript[@]}"; do
         if [ $pi = "custom" ]; then
             continue
         fi
-        if ! curl -L -o /mnt/pi/$pi.sfs "$sfsserverurl/pi/$pi.sfs" || ! wget -O /mnt/pi/$pi.sfs "$sfsserverurl/pi/$pi.sfs"; then
-            dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to download the $pi image!"
-            menusel
-            return
-        fi
+        # if ! curl -L -o /mnt/pi/$pi.sfs "$sfsserverurl/pi/$pi.sfs" || ! wget -O /mnt/pi/$pi.sfs "$sfsserverurl/pi/$pi.sfs"; then
+        #     dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to download the $pi image!"
+        #     menusel
+        #     return
+        # fi
     done
-    # if $osbs is not equal to "sfs", unpack the rootfs image to /mnt/
     if [ "$osbs" != "sfs" ]; then
         for i in $(printf '%s\n' "${mntlst[@]}" | grep -Evw "/|/data|/overlay|swap"); do
             mount_part $i
@@ -720,85 +980,75 @@ start_install(){
                 return
             fi
         done
-        if ! unsquashfs -f -d /mnt /mnt/rootfs.sfs; then
-            dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to unpack the rootfs image!"
-            menusel
-            return
-        fi
-        # if piscript doesn't contain "custom", unpack the post-install images to /mnt, else, copy the preset configuations from preset/<preset>/<arch>/ to /mnt
+        # if ! unsquashfs -f -d /mnt /mnt/rootfs.sfs; then
+        #     dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to unpack the rootfs image!"
+        #     menusel
+        #     return
+        # fi
         if ! echo "${piscript[@]}" | grep -q "custom"; then
             for pi in "${piscript[@]}"; do
-                if ! unsquashfs -f -d /mnt /mnt/pi/$pi.sfs; then
-                    dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to unpack the $pi image!"
-                    menusel
-                    return
-                fi
+                # if ! unsquashfs -f -d /mnt /mnt/pi/$pi.sfs; then
+                #     dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to unpack the $pi image!"
+                #     menusel
+                #     return
+                # fi
+                echo 1
             done
         else
             for pi in "${piscript[@]}"; do
                 if [ $pi = "custom" ]; then
                     continue
                 fi
-                cp -r preset/$pi/$arct/* /mnt
+                # cp -r preset/$pi/$arct/* /mnt
             done
-            # chroot into /mnt and install packages listed in pkglist file (if $osbs is "deb", use apt, if $osbs is "arch", use pacman)
             if [ "$osbs" == "deb" ]; then
-                chroot /mnt apt-get update
-                chroot /mnt xargs apt-get -y install < pkglist
+                # chroot /mnt apt-get update
+                # chroot /mnt xargs apt-get -y install < pkglist
+                echo 1
             elif [ "$osbs" == "arch" ]; then
-                chroot /mnt pacman -S - < pkglist
+                # chroot /mnt pacman -S - < pkglist
+                echo 1
             fi
         fi
     else
-        # if $osbs is equal to "sfs", download data-$arct.img from $sfsserverurl to /mnt/data.img
-        if ! curl -L -o /mnt/data.img "$sfsserverurl/data-$arct.img" || ! wget -O /mnt/data.img "$sfsserverurl/data-$arct.img"; then
-            dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to download the data.img image!"
-            menusel
-            return
-        fi
+        # if ! curl -L -o /mnt/data.img "$sfsserverurl/data-$arct.img" || ! wget -O /mnt/data.img "$sfsserverurl/data-$arct.img"; then
+        #     dialog --backtitle "$bt" --title "$tt" --msgbox "ERROR: Failed to download the data.img image!"
+        #     menusel
+        #     return
+        # fi
         external_data=$(printf '%s\n' "${mntlst[@]}" | grep -w "/data")
         if [ -n "$external_data" ]; then
             external_data_dev=$(echo $external_data | awk '{print $1}')
-            dd if=/mnt/data.img of=$external_data_dev bs=4M
-            # change boot args "data=/cdrom/data.img" to "data=$external_data_dev" in /mnt/boot/grub/grub.cfg
-            sed -i "s/data=\/cdrom\/data.img/data=$external_data_dev/g" /mnt/boot/grub/grub.cfg
+            # dd if=/mnt/data.img of=$external_data_dev bs=4M
+            # sed -i "s/data=\/cdrom\/data.img/data=$external_data_dev/g" /mnt/boot/grub/grub.cfg
         fi
-        # copy preset/0-global/$arct/boot to /mnt/boot
-        cp -r preset/0-global/$arct/boot /mnt/boot
-        # promt user to choose to have overlay enabled or not
+        # cp -r preset/0-global/$arct/boot /mnt/boot
         if dialog --backtitle "$bt" --title "Overlay" --yesno "Do you want to enable overlay?"; then
-            # create overlay.img file, size = size of the partition (using df command) - (2 times size of the rootfs image) - size of the data.img image - size of the post-install images in /mnt/pi
             external_overlay=$(printf '%s\n' "${mntlst[@]}" | grep -w "/overlay")
             if [ -n "$external_overlay" ]; then
                 overlay_dev=$(echo $external_overlay | awk '{print $1}')
             else
                 overlay_dev=/mnt/overlay.img
-                dd if=/dev/zero of=$overlay_dev bs=1M count=$(($(df -m /mnt | tail -n 1 | awk '{print $2}') - $(du -m /mnt/rootfs.sfs | awk '{print $1}') - $(du -m /mnt/data.img | awk '{print $1}') - $(du -m /mnt/pi | awk '{print $1}')))
+                # dd if=/dev/zero of=$overlay_dev bs=1M count=$(($(df -m /mnt | tail -n 1 | awk '{print $2}') - $(du -m /mnt/root.sfs | awk '{print $1}') - $(du -m /mnt/data.img | awk '{print $1}') - $(du -m /mnt/pi | awk '{print $1}')))
             fi
-            mkfs.ext4 -L overlay $overlay_dev
-            # change boot args "overlay=tmpfs" to "overlay=/cdrom/overlay.img" in /mnt/boot/grub/grub.cfg
-            sed -i "s/overlay=tmpfs/overlay=$overlay_dev/" /mnt/boot/grub/grub.cfg
-            # remove boot args "overlayfstype=tmpfs overlayflags=nodev,nosuid" from /mnt/boot/grub/grub.cfg
-            sed -i "s/overlayfstype=tmpfs overlayflags=nodev,nosuid//" /mnt/boot/grub/grub.cfg
+            # mkfs.ext4 -L overlay $overlay_dev
+            # sed -i "s/overlay=tmpfs/overlay=$overlay_dev/" /mnt/boot/grub/grub.cfg
+            # sed -i "s/overlayfstype=tmpfs overlayflags=nodev,nosuid//" /mnt/boot/grub/grub.cfg
         else
-            # remove boot args "overlay=tmpfs overlayfstype=tmpfs overlayflags=nodev,nosuid" from /mnt/boot/grub/grub.cfg
-            sed -i "s/overlay=tmpfs overlayfstype=tmpfs overlayflags=nodev,nosuid//" /mnt/boot/grub/grub.cfg
+            # sed -i "s/overlay=tmpfs overlayfstype=tmpfs overlayflags=nodev,nosuid//" /mnt/boot/grub/grub.cfg
+            # dd if=/dev/zero of=/mnt/data.img bs=1M count=$(($(df -m /mnt | tail -n 1 | awk '{print $2}') - $(du -m /mnt/root.sfs | awk '{print $1}') - $(du -m /mnt/pi | awk '{print $1}')))
+            echo 1
         fi
     fi
     # is it finished?
+    # no u fcking idiot, there are lots of things to do here
     dialog --backtitle "$bt" --title "Finished" --extra-button --extra-label "Other" --yesno "Do you want to reboot?"
     case $? in
         0)
-            # if user choose to reboot, reboot
-            reboot
+            # reboot
             ;;
         1)
-            # if user choose to continue, return to menusel
             menusel
-            ;;
-        3)
-            # if user choose "Other", open power menu
-            poweropts
             ;;
     esac
 }
@@ -840,10 +1090,11 @@ menusel() {
             "PARTITION  ") diskchoose ;;
             "INSTALL    ") ossel ;;
             "POWER      ") poweropts ;;
-            *) reset ; exit ;;
+            *) reset; printf "Run ./install.sh to restart the installer\n"; exit ;;
         esac
     done
 }
+
 main(){
     init
     dircheck
@@ -853,11 +1104,17 @@ main(){
     usrname
     diskchoose
     ossel
+    poweropts
 }
+
+if [ "$EUID" -ne 0 ]; then
+    dialog --backtitle "$bt" --title "ERROR" --msgbox "Please run this script as root."
+    exit
+fi
 if dialog --backtitle "$bt" --title "$tt" --yesno "This is ExtOS linux respin v0.1\nMade by Shadichy\n\nStart installation process?" 0 0
 then
     menusel
-    # main
+    # main "$@"
 else
     printf "Run ./install.sh to restart the installer\n"
 fi
