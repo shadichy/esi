@@ -288,7 +288,9 @@ mntck() {
     if free | awk '/^Swap:/ {exit !$2}'; then
         swapoff -a
     fi
-    echo unmounted
+    for vg in $(vgs --noheadings -o vg_name); do
+        vgchange -ay $vg
+    done
 }
 
 diskchoose() {
@@ -342,18 +344,14 @@ diskchoose() {
                         break
                     fi
                     for p in $(lsblk -n -p -r -e 7,11,251 -o NAME $d | grep -vw $d); do
-                        part_kind=$(lsblk -d -n -r -o TYPE $p)
-                        if [ $part_kind = "crypt" ]; then
-                            continue
-                        fi
-                        if [ $part_kind = "lvm" ]; then
+                        part_fs=$(lsblk -d -n -r -o FSTYPE $p)
+                        if [[ $part_fs =~ "crypt".* ]] || [[ $part_fs =~ "swap".* ]] || [[ $part_fs =~ "LVM".* ]] || [[ $part_fs =~ "raid".* ]] || [[ -z $part_fs ]]; then
                             continue
                         fi
                         if ! mount $p /mnt; then
                             continue
                         fi
                         if [ $(df -m --output=avail /mnt | grep -v "Avail") -lt 4096 ]; then
-                            echo 0
                             umount /mnt
                             continue
                         fi
@@ -422,6 +420,9 @@ diskchoose() {
 disklst() {
     unset devs
     for dev in $(lsblk -n -p -r -e 7,11,251 -o NAME); do
+        if [ ! -z $(printf '%s\n' "${devs[@]}" | grep -w "$dev") ]; then
+            continue
+        fi
         devsz=$(lsblk -d -n -r -o SIZE "$dev")
         devtp=$(lsblk -d -n -o TYPE $dev)
         devfs=$(lsblk -d -n -r -o FSTYPE "$dev")
@@ -470,7 +471,6 @@ simplediskman() {
                         dialog --backtitle "$bt" --title "Formatting $devdisk" --msgbox "Failed to set $devdisk as bootable" 0 0
                         continue
                     fi
-                    echo "flagasboot"
                 }
                 case $cmos in
                     "uefi")
@@ -572,6 +572,7 @@ diskman() {
         case $? in
             0)
                 devtype=$(lsblk -d -n -r -o TYPE $devdisk)
+                devfstype=$(lsblk -d -n -r -o FSTYPE $devdisk)
                 if [ $devtype == "disk" ]; then
                     dorpa="Partition table: $(fdisk -l $devdisk | grep Disklabel | awk '{print $3}')"
                     dorpb=" entire disk"
@@ -581,10 +582,10 @@ diskman() {
                 fi
                 while true; do
                     cryptopt=""
-                    if [ $devtype == "crypt" ]; then
+                    if [[ $devfstype =~ "crypt".* ]]; then
                         cryptopt="\"Decrypt\" \"Mount Encrypted\""
                     fi
-                    if [ $devtype == "lvm" ] || [ $devtype == "disk" ]; then
+                    if [ $devtype == "disk" ]; then
                         cryptopt="\"Manage\" \"Manage Volumes/Partitions\""
                     fi
                     mntopts=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "${devtype^^} $devdisk\n    Type: $devtype\n    $dorpa\n    Size: $(lsblk -d -n -r -o SIZE $devdisk)\n    In use: none\n\nChoose an action:" 0 0 0 \
@@ -630,20 +631,123 @@ diskman() {
                             disklst
                             break
                         done ;;
-                        "Format") fsformat=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Please select the filesystem to be formated on $devdisk" 0 0 0 \
-                        "Ext2" "Standard Extended Filesystem for Linux version 2" \
-                        "Ext3" "Ext2 with journaling" \
-                        "Ext4" "Latest version of Extended Filesystem improved" \
-                        "BTRFS" "Filesystem for storing and managing large volume of data provided by Btrfs" \
-                        "XFS" "High-performance filesystem for server use" \
-                        "JFS" "Journaled filesystem by IBM" \
-                        "ZFS" "Filesystem for storing and managing large volume of data provided by OpenZFS" \
-                        "FAT32" "Compatible, highly usable filesystem for storing data only (ExtOS Frugal installable)" \
-                        "NTFS" "Standard Windows filesystem, use for data transfer only (ExtOS Frugal installable)" \
-                        "LVM" "Logical Volume Manager, useful if you want to have more partitions on the disk that has 'msdos' partition table or when you have multiple disks (with or without RAID)" \
-                        "Encrypted" "Encrypted filesystem, secure your data" \
-                        "Swap" "Virtual memory partition" \
-                        "Unformated" "Unformated partition" );;
+                        "Format") while true;do
+                            fsformat=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Please select the filesystem to be formated on $devdisk" 0 0 0 \
+                            "Ext2" "Standard Extended Filesystem for Linux version 2" \
+                            "Ext3" "Ext2 with journaling" \
+                            "Ext4" "Latest version of Extended Filesystem improved" \
+                            "BTRFS" "Filesystem for storing and managing large volume of data provided by Btrfs" \
+                            "XFS" "High-performance filesystem for server use" \
+                            "JFS" "Journaled filesystem by IBM" \
+                            "ZFS" "Filesystem for storing and managing large volume of data provided by OpenZFS" \
+                            "FAT32" "Compatible, highly usable filesystem for storing data only (ExtOS Frugal installable)" \
+                            "NTFS" "Standard Windows filesystem, use for data transfer only (ExtOS Frugal installable)" \
+                            "F2FS" "Fast filesystem for storing data only (ExtOS Frugal installable)" \
+                            "LVM" "Logical Volume Manager, useful if you want to have more partitions on the disk that has 'msdos' partition table or when you have multiple disks (with or without RAID)" \
+                            "Encrypted" "Encrypted filesystem, secure your data" \
+                            "Swap" "Virtual memory partition" \
+                            "Unformated" "Unformated partition" )
+                            if [ $? -ne 0 ]; then
+                                break
+                            fi
+                            dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --yesno "Warning: All data on ${devtype^} $devdisk will be erased\n\nContinue?" 0 0
+                            if [ $? -ne 0 ]; then
+                                break
+                            fi
+                            if [[ $devfstype =~ "LVM".* ]]; then
+                                vgroup=$(pvs --noheadings -o vg_name $devdisk | awk '{print $1}')
+                                pvmove "$devdisk"
+                                if [ $? -ne 0 ]; then
+                                    break
+                                fi
+                                vgchange -an "$vgroup"
+                                if [ $? -ne 0 ]; then
+                                    break
+                                fi
+                                vgreduce "$vgroup" "$devdisk"
+                                if [ $? -ne 0 ]; then
+                                    break
+                                fi
+                                pvremove "$devdisk"
+                                if [ $? -ne 0 ]; then
+                                    break
+                                fi
+                                vgchange -ay "$vgroup"
+                                if [ $? -ne 0 ]; then
+                                    break
+                                fi
+                            fi
+                            case $fsformat in 
+                                "Ext2")
+                                    mkfs.ext2 -F $devdisk
+                                    ;;
+                                "Ext3")
+                                    mkfs.ext3 -F $devdisk
+                                    ;;
+                                "Ext4")
+                                    mkfs.ext4 -F $devdisk
+                                    ;;
+                                "BTRFS")
+                                    mkfs.btrfs $devdisk
+                                    ;;
+                                "XFS")
+                                    mkfs.xfs -f $devdisk
+                                    ;;
+                                "JFS")
+                                    mkfs.jfs $devdisk
+                                    ;;
+                                "ZFS")
+                                    zpool create -f $(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1) $devdisk
+                                    ;;
+                                "FAT32")
+                                    mkfs.vfat -F 32 $devdisk
+                                    ;;
+                                "NTFS")
+                                    mkfs.ntfs $devdisk
+                                    ;;
+                                "F2FS")
+                                    mkfs.f2fs $devdisk
+                                    ;;
+                                "LVM")
+                                    pvcreate $devdisk
+                                    ;;
+                                "Encrypted") while true;do
+                                    # ask for password
+                                    ecryptpass=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --inputbox "Please enter the password for the encrypted filesystem" 0 0)
+                                    if [ $? -ne 0 ]; then
+                                        break
+                                    fi
+                                    if [ -z $ecryptpass ]; then
+                                        dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --msgbox "Password cannot be empty" 0 0
+                                        continue
+                                    fi
+                                    ecryptpass2=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --inputbox "Please re-enter the password to confirm" 0 0)
+                                    if [ $? -ne 0 ]; then
+                                        break
+                                    fi
+                                    if [ -z $ecryptpass2 ]; then
+                                        dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --msgbox "Password cannot be empty" 0 0
+                                        continue
+                                    fi
+                                    if [ "$ecryptpass" != "$ecryptpass2" ]; then
+                                        dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --msgbox "Password does not match, please try again" 0 0
+                                    else
+                                        echo -e "$ecryptpass\n$ecryptpass" | cryptsetup luksFormat $devdisk
+                                        echo -e "$ecryptpass" | cryptsetup open $devdisk $(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
+                                    fi
+                                done ;;
+                                "Swap")
+                                    mkswap $devdisk
+                                    ;;
+                                "Unformated")
+                                    wipefs -a $devdisk
+                                    ;;
+                            esac
+                            if [ $? -ne 0 ]; then
+                                dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --msgbox "Error while formating the partition $devdisk as $fsformat, please try again" 0 0
+                                break
+                            fi
+                        done ;;
                         "Decrypt") while true; do
                             cryptpass=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --inputbox "$devdisk appears to be an encrypted partition\nIt must be unlocked in order to continue\n\nPlease enter the encryption passphrase:" 0 0)
                             if [ $? -ne 0 ]; then
@@ -652,115 +756,14 @@ diskman() {
                             if [ -z $cryptpass ]; then
                                 dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the encryption passphrase!"
                             fi
-                            if cryptsetup luksOpen $devdisk $devdisk"_crypt" --key-file=-; then
+                            if echo -e "$cryptpass" | cryptsetup open $devdisk $(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1); then
                                 break
                             else
                                 dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: Could not unlock the partition.\n\nPlease check the passphrase and try again."
                             fi
                         done ;;
                         "Manage") while true; do
-                            case $devtype in
-                                "lvm")
-                                lvmopt=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Please select the action you want to perform on $devdisk" 0 0 0 \
-                                "Create Volume Group" "Create a new Volume Group" \
-                                "Create Logical Volume" "Create a new Logical Volume" \
-                                "Create Physical Volume" "Create a new Physical Volume" \
-                                "Remove Volume Group" "Remove an existing Volume Group" \
-                                "Remove Logical Volume" "Remove an existing Logical Volume" \
-                                "Remove Physical Volume" "Remove an existing Physical Volume" )
-                                if [ $? -ne 0 ]; then
-                                    break
-                                fi
-                                case $lvmopt in
-                                    "Create Volume Group") while true; do
-                                        vgname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --inputbox "Please enter the name of the Volume Group:" 0 0)
-                                        if [ $? -ne 0 ]; then
-                                            break
-                                        fi
-                                        if [ -z $vgname ]; then
-                                            dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the name of the Volume Group!"
-                                        fi
-                                        if lvcreate -y -V 1G -n $vgname $devdisk; then
-                                            break
-                                        else
-                                            dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: Could not create the Volume Group.\n\nPlease check the name and try again."
-                                        fi
-                                    done ;;
-                                    "Create Logical Volume") while true; do
-                                        vgname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --inputbox "Please enter the name of the Volume Group:" 0 0)
-                                        if [ $? -ne 0 ]; then
-                                            break
-                                        fi
-                                        if [ -z $vgname ]; then
-                                            dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the name of the Volume Group!"
-                                        fi
-                                        lvname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --inputbox "Please enter the name of the Logical Volume:" 0 0)
-                                        if [ $? -ne 0 ]; then
-                                            break
-                                        fi
-                                        if [ -z $lvname ]; then
-                                            dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the name of the Logical Volume!"
-                                        fi
-                                        if lvcreate -y -V 1G -n $lvname -L $vgname $devdisk; then
-                                            break
-                                        else
-                                            dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: Could not create the Logical Volume.\n\nPlease check the name and try again."
-                                        fi
-                                    done ;;
-                                    "Remove Volume Group") while true; do
-                                        vgname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --inputbox "Please enter the name of the Volume Group:" 0 0)
-                                        if [ $? -ne 0 ]; then
-                                            break
-                                        fi
-                                        if [ -z $vgname ]; then
-                                            dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the name of the Volume Group!"
-                                        fi
-                                        if vgremove -y $vgname; then
-                                            break
-                                        else
-                                            dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: Could not remove the Volume Group.\n\nPlease check the name and try again."
-                                        fi
-                                    done ;;
-                                    "Remove Logical Volume") while true; do
-                                        vgname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --inputbox "Please enter the name of the Volume Group:" 0 0)
-                                        if [ $? -ne 0 ]; then
-                                            break
-                                        fi
-                                        if [ -z $vgname ]; then
-                                            dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the name of the Volume Group!"
-                                        fi
-                                        lvname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --inputbox "Please enter the name of the Logical Volume:" 0 0)
-                                        if [ $? -ne 0 ]; then
-                                            break
-                                        fi
-                                        if [ -z $lvname ]; then
-                                            dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the name of the Logical Volume!"
-                                        fi
-                                        if lvremove -y $vgname/$lvname; then
-                                            break
-                                        else
-                                            dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: Could not remove the Logical Volume.\n\nPlease check the name and try again."
-                                        fi
-                                    done ;;
-                                    "Remove Physical Volume") while true; do
-                                        pvname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --inputbox "Please enter the name of the Physical Volume:" 0 0)
-                                        if [ $? -ne 0 ]; then
-                                            break
-                                        fi
-                                        if [ -z $pvname ]; then
-                                            dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the name of the Physical Volume!"
-                                        fi
-                                        if pvremove -y $pvname; then
-                                            break
-                                        else
-                                            dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: Could not remove the Physical Volume.\n\nPlease check the name and try again."
-                                        fi
-                                    done ;;
-                                esac ;;
-                                "disk") 
-                                    printf "fix\n" | parted ---pretend-input-tty $devdisk print free 
-                                    ;;
-                            esac
+                            cfdisk $devdisk
                         done ;;
                     esac
                     break
@@ -768,7 +771,6 @@ diskman() {
                 ;;
             3)
                 diskconfirm=1
-                echo lol
                 break
                 ;;
             *)
@@ -804,7 +806,6 @@ ossel() {
             "Frugal") osbs="sfs"; picustom="" ;;
         esac
         initsel
-        echo $osdone > out
         if [ ! -z "$osdone" ]; then
             break
         fi
@@ -896,7 +897,6 @@ pisel() {
 
 mount_part() {
     mount -m "$1" "/mnt$2"
-    echo "mounted $1 to /mnt$2"
 }
 
 start_install(){
@@ -934,13 +934,14 @@ start_install(){
                 start_install
                 return
             fi
-            echo $psk | cryptsetup luksOpen "$mnt" "$mnt"
+            randomname=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
+            echo $psk | cryptsetup open "$mnt" "$randomname"
             if [ $? -ne 0 ]; then
                 dialog --backtitle "$bt" --title "Error" --msgbox "Error while opening $mnt" 0 0
                 start_install
                 return
             fi
-            mkfs.ext4 -L "$mnt"
+            mkfs.ext4 -L "$randomname" "/dev/mapper/$randomname"
             if [ $? -ne 0 ]; then
                 dialog --backtitle "$bt" --title "Error" --msgbox "Error while formatting $mnt" 0 0
                 start_install
@@ -992,7 +993,6 @@ start_install(){
                     menusel
                     return
                 fi
-                echo 1
             done
         else
             for pi in "${piscript[@]}"; do
@@ -1004,10 +1004,8 @@ start_install(){
             if [ "$osbs" == "deb" ]; then
                 chroot /mnt apt-get update
                 chroot /mnt xargs apt-get -y install < pkglist
-                echo 1
             elif [ "$osbs" == "arch" ]; then
                 chroot /mnt pacman -S - < pkglist
-                echo 1
             fi
         fi
     else
@@ -1037,7 +1035,6 @@ start_install(){
         else
             sed -i "s/overlay=tmpfs overlayfstype=tmpfs overlayflags=nodev,nosuid//" /mnt/boot/grub/grub.cfg
             dd if=/dev/zero of=/mnt/data.img bs=1M count=$(($(df -m /mnt | tail -n 1 | awk '{print $2}') - $(du -m /mnt/root.sfs | awk '{print $1}') - $(du -m /mnt/pi | awk '{print $1}')))
-            echo 1
         fi
     fi
     is it finished?
