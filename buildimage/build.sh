@@ -21,19 +21,6 @@ while [[ "$1" ]];do
 			echo "  -d, --data:  Specify custom data image"
 			exit 0
 			;;
-		-b|--build=*)
-			# Build the image rootfs and/or data image, separated by comma, e.g. -b rootfs,data, for each, run $WORKDIR/build_<rootfs|data>.sh
-			[[ "${1}" == *"="* ]] && build_type="${1#*=}" || build_type="$2"
-			for build_item in $(echo $build_type | tr "," "\n"); do
-				if [ ! -f $WORKDIR/build_$build_item.sh ]; then
-					echo "Error: $WORKDIR/build_$build_item.sh does not exist"
-					exit 1
-				fi
-				echo "Building $build_item"
-				$WORKDIR/build_$build_item.sh
-			done
-			exit 0
-			;;
 		-r|--rootfs=*)
 			[[ "${1}" == *"="* ]] && root_image="${1#*=}" || root_image="$2"
 			;;
@@ -45,6 +32,19 @@ while [[ "$1" ]];do
 			;;
 		-i|--noiso)
 			noiso="true"
+			;;
+		-b|--build=*)
+			# Build the image rootfs and/or data image, separated by comma, e.g. -b rootfs,data, for each, run $WORKDIR/build_<rootfs|data>.sh
+			[[ "${1}" == *"="* ]] && build_type="${1#*=}" || build_type="$2"
+			for build_item in $(echo $build_type | tr "," "\n"); do
+				if [ ! -f $WORKDIR/build_$build_item.sh ]; then
+					echo "Error: $WORKDIR/build_$build_item.sh does not exist"
+					exit 1
+				fi
+				echo "Building $build_item"
+				$WORKDIR/build_${build_item}.sh ${build_item}_image
+			done
+			exit 0
 			;;
 	esac
 	shift

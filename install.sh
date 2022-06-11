@@ -295,10 +295,7 @@ mntck() {
 
 disklst() {
     unset devs
-    for dev in $(lsblk -n -p -r -e 7,11,251 -o NAME); do
-        if [ ! -z $(printf '%s\n' "${devs[@]}" | grep -w "$dev") ]; then
-            continue
-        fi
+    for dev in $(lsblk -M -n -p -r -e 7,11,251 -o NAME); do
         if [ ! -z $(lsblk -n -r -o MOUNTPOINT $dev) ]; then
             continue
         fi
@@ -463,22 +460,7 @@ simplediskman() {
         if [ $? -ne 0 ]; then
             continue
         fi
-        lvmorcrypt=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "No" --stdout --menu "Do you want to use LVM and/or Encrypt the installation disk/partition?\n\nSelect the option in the list below:" 0 0 0 \
-            "No" "Do not use LVM or Encrypt the installation disk/partition" \
-            "LVM" "Use LVM multiple sub-partition on installation disk/partition (for over 32gb partitions and disks)" \
-            "Encrypt" "Encrypt the installation disk/partition" \
-            "LVM+Encrypt" "Use LVM multiple sub-partition on Encrypted installation disk/partition" )
-        if [ $? -eq 0 ]; then
-            case $lvmorcrypt in
-                "LVM") uselvm=1;;
-                "Encrypt") useencrypt=1 ;;
-                "LVM+Encrypt")
-                    uselvm=1
-                    useencrypt=1
-                    ;;
-            esac
-        fi
-        dialog --backtitle "$bt" --title "Partition the harddrive" --yesno "Do you want to use swap? Swap is a partition that serves as overflow space for your RAM.\n\nSwap is not required for ExtOS to run, but it is recommended to use swap for better performance." 0 0
+        dialog --backtitle "$bt" --title "Partition the harddrive" --yesno "Do you want to use swap? Swap is a partition that serves as overflow space for your RAM.\n\nSwap is not required for ExtOS to run, but it is recommended to use swap for better performance on low-end hardware or hibernation." 0 0
         if [ $? -ne 0 ]; then
             useswap=0
         else
@@ -487,6 +469,28 @@ simplediskman() {
         case $devtype in
             "part")
                 rootfsdev=$devdisk
+                # while true; do
+                #     if [ useencrypt -ne 1 ]; then
+                #         break
+                #     fi
+                #     if [ $(lsblk -d -n -r -o TYPE $rootfsdev) = "crypt" ]; then
+                #         break
+                #     fi
+                #     parentnode="/dev/$(lsblk -d -n -r -o PKNAME $rootfsdev)"
+                #     # for p in $(lsblk -p -n -r -o NAME $parentnode | grep -vw "$parentnode"); do
+                #     #     if [ ! -z "$(parted -s $p print | grep -w "boot")" ]; then
+                #     #         echo "boot at $p"
+                #     #     fi
+                #     # done
+                #     cryptsetup luksFormat $rootfsdev
+                #     if [ $? -ne 0 ]; then
+                #         break
+                #     fi
+                #     randname=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
+                #     cryptsetup luksOpen $rootfsdev $randname
+                #     rootfsdev="/dev/mapper/$randname"
+                #     break
+                # done
                 dialog --backtitle "$bt" --title "Formatting $devdisk" --infobox "Formatting $devdisk as ext4" 0 0
                 mkfs.ext4 -F -L EXTOS $devdisk
                 if [ $? -ne 0 ]; then
@@ -524,10 +528,10 @@ simplediskman() {
                     continue
                 fi
                 espdev=$(lsblk -n -r -p -o NAME $devdisk | grep -vw "$devdisk")
-                mkfs.fat -F32 -n EFI $espdev
                 parted -s $devdisk name 1 EFI
                 parted -s $devdisk set 1 esp on
                 parted -s $espdev set 1 boot on
+                mkfs.fat -F32 -n EFI $espdev
                 if [ $cmos = "uefi" ]; then
                     MNTLST+=("$espdev /boot/efi")
                 else
@@ -539,8 +543,51 @@ simplediskman() {
                     continue
                 fi
                 rootfsdev=$(lsblk -n -r -p -o NAME $devdisk | tail -n 1)
-                mkfs.ext4 -F -L EXTOS $rootfsdev
                 parted -s $devdisk name 2 EXTOS
+                useencrypt() {
+                    cryptsetup luksFormat $rootfsdev
+                    if [ $? -ne 0 ]; then
+                        dialog --backtitle "$bt" --title "Formatting $devdisk" --msgbox "Failed to format $rootfsdev" 0 0
+                        continue
+                    fi
+                    randname=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
+                    cryptsetup luksOpen $rootfsdev $randname
+                    rootfsdev="/dev/mapper/$randname"
+                }
+                uselvm() {
+                    pvcreate $rootfsdev
+                    if [ $? -ne 0 ]; then
+                        dialog --backtitle "$bt" --title "Formatting $devdisk" --msgbox "Failed to create physical volume on $rootfsdev" 0 0
+                        continue
+                    fi
+                    randname=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
+                    vgcreate $randname $rootfsdev
+                    lvcreate -l 100%FREE -n EXTOS $randname
+                    rootfsdev="/dev/mapper/$randname-EXTOS"
+                }
+                devsize=$(lsblk -d -n -r -b -o SIZE $devdisk)
+                if (( $(echo "${devsize%MiB} >= 8589934592" |bc -l) )); then
+                    haslvm=""
+                    if (( $(echo "${devsize%MiB} >= 34359738368" |bc -l) )); then
+                        haslvm="\"LVM\" \"Use LVM multiple sub-partition on installation disk/partition (for over 32gb partitions and disks)\" \
+                                \"LVM-on-Encrypt\" \"Use LVM multiple sub-partition on Encrypted installation disk/partition\""
+                    fi
+                    lvmorcrypt=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "No" --stdout --menu "Do you want to use LVM and/or Encrypt the installation disk/partition?\n\nSelect the option in the list below:" 0 0 0 \
+                        "No" "Do not use LVM or Encrypt the installation disk/partition" \
+                        "Encrypt" "Encrypt the installation disk/partition" \
+                        $haslvm )
+                    if [ $? -eq 0 ]; then
+                        case $lvmorcrypt in
+                            "LVM") uselvm ;;
+                            "Encrypt") useencrypt ;;
+                            "LVM-on-Encrypt")
+                                useencrypt
+                                uselvm
+                                ;;
+                        esac
+                    fi
+                fi
+                mkfs.ext4 -F -L EXTOS $rootfsdev
                 MNTLST+=("$rootfsdev /")
                 ;;
         esac
@@ -637,7 +684,7 @@ diskman() {
                             "NTFS" "Standard Windows filesystem, use for data transfer only (ExtOS Frugal installable)" \
                             "F2FS" "Fast filesystem for storing data only (ExtOS Frugal installable)" \
                             "LVM" "Logical Volume Manager, useful if you want to have more partitions on the disk that has 'msdos' partition table or when you have multiple disks (with or without RAID)" \
-                            "Encrypted" "Encrypted filesystem, secure your data" \
+                            "Encrypted" "Encrypted filesystem, secure your data (/boot or /boot/efi is required)" \
                             "Swap" "Virtual memory partition" \
                             "Unformated" "Unformated partition" )
                             if [ $? -ne 0 ]; then
@@ -862,6 +909,7 @@ pisel() {
         piscript=$(dialog --backtitle "$bt" --title "$tt" --stdout --ok-label "Next" --cancel-label "Back" --extra-button --extra-label "Skip" --checklist "Choose one of the presets below, or do it later\nUse arrows key and space" 0 0 0 \
         "gaming" "Cross-play suite for gamers" off \
         "office" "Suit for office work, with many useful softwares" off \
+        "design" "Suit for graphic/art/architecture design" off \
         "devel" "Developing enviroment for coders/developers" off \
         "server" "Tools and utilities for a mini host server" off \
         $picustom)
@@ -1013,6 +1061,10 @@ start_install(){
             sed -i "s/overlay=tmpfs overlayfstype=tmpfs overlayflags=nodev,nosuid//" /mnt/boot/grub/grub.cfg
             dd if=/dev/zero of=/mnt/data.img bs=1M count=$(($(df -m /mnt | tail -n 1 | awk '{print $2}') - $(du -m /mnt/root.sfs | awk '{print $1}') - $(du -m /mnt/pi | awk '{print $1}')))
         fi
+    fi
+    if [ $useswap -eq 1 ]; then
+        dd if=/dev/zero of=/mnt/swap bs=1M count=1024
+        mkswap /mnt/swap
     fi
     # is it finished?
     # no u fcking idiot, there are lots of things to do here
