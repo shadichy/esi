@@ -672,6 +672,10 @@ diskman() {
                             break
                         done ;;
                         "Format") while true;do
+                            xtrafs=""
+                            if [ ! -z $(printf '%s\n' "${MNTLST[@]}" | grep "/boot" | awk '{print $2}') ]; then
+                                xtrafs="\"Encrypted\" \"Encrypted filesystem, secure your data (/boot or /boot/efi is required)\""
+                            fi
                             fsformat=$(dialog --backtitle "$bt" --title "Partition the harddrive" --cancel-label "Back" --stdout --menu "Please select the filesystem to be formated on $devdisk" 0 0 0 \
                             "Ext2" "Standard Extended Filesystem for Linux version 2" \
                             "Ext3" "Ext2 with journaling" \
@@ -684,7 +688,7 @@ diskman() {
                             "NTFS" "Standard Windows filesystem, use for data transfer only (ExtOS Frugal installable)" \
                             "F2FS" "Fast filesystem for storing data only (ExtOS Frugal installable)" \
                             "LVM" "Logical Volume Manager, useful if you want to have more partitions on the disk that has 'msdos' partition table or when you have multiple disks (with or without RAID)" \
-                            "Encrypted" "Encrypted filesystem, secure your data (/boot or /boot/efi is required)" \
+                            $xtrafs \
                             "Swap" "Virtual memory partition" \
                             "Unformated" "Unformated partition" )
                             if [ $? -ne 0 ]; then
@@ -807,6 +811,13 @@ diskman() {
                                 # vg_lv=${vg_lv%,}
                                 # vginfo+=""$'\t'"$vg_pv"$'\t'"$vg_lv"
                             # pvlist=$(pvs --noheadings -o pv_name)
+                            listpvfree() {
+                                pvfreelist=("")
+                                while IFS= read -r line; do
+                                    pvinfo="$(pvs --noheadings -o pv_size,pv_free,pv_uuid $line)"
+                                    pvfreelist+="\"$line\" \"$pvinfo\" off "
+                                done <<< "$(pvs --noheadings -o pv_name | grep -vf <(vgs --noheadings -o pv_name))"
+                            }
                             vgselect=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --extra-button --extra-label "Create" --menu "Select the volume group to manage\n\n       Name   Size       Free    UUID" 0 80 0 ${vglist[@]})
                             case $? in
                                 0) while true; do
@@ -821,7 +832,27 @@ diskman() {
                                         break
                                     fi
                                     case $vgoption in
-                                        "Manage PV");;
+                                        "Manage PV") while true; do
+                                            pvlist=("")
+                                            for pv in ${pvofvg[@]}; do
+                                                pvinfo="$(echo "$(pvs --noheadings -o pv_size,pv_free,pv_uuid $pv)" | awk '{for (i=1; i<NF; i++) printf $i " \t"; print $NF}')"
+                                                pvlist+=( "$pv" "$pvinfo" )
+                                            done
+                                            pvselect=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --extra-button --extra-label "Add" --ok-label "Select" --menu "Select the physical volume to manage\n\n       Name   Size       Free    UUID" 0 80 0 ${pvlist[@]})
+                                            case $? in
+                                                0) ;;
+                                                1) break ;;
+                                                3) listpvfree
+                                                    pvselect=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --ok-label "Select" --checklist "Select the physical volume to add to this Volume Group\n\n       Name   Size       Free    UUID" 0 80 0 ${pvfreelist[@]})
+                                                    if [ $? -eq 0 ]; then
+                                                        vgextend $vgselect $pvselect
+                                                        if [ $? -ne 0 ]; then
+                                                            dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: Could not add the physical volume to the volume group.\n\nPlease check the volume group and try again."
+                                                        fi
+                                                    fi
+                                                ;;
+                                            esac
+                                        done ;;
                                         "Manage LV");;
                                         "Rename") while true; do
                                             newvgname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --inputbox "Enter the new name for the volume group" 0 0)
@@ -850,12 +881,8 @@ diskman() {
                                     break
                                 done ;;
                                 1) break ;;
-                                3) pvfreelist=""
-                                    while IFS= read -r line; do
-                                        pvinfo="$(pvs --noheadings -o pv_size,pv_free,pv_uuid $line)"
-                                        pvfreelist+="\"$line\" \"$pvinfo\" off "
-                                    done <<< "$(pvs --noheadings -o pv_name | grep -vf <(vgs --noheadings -o pv_name))"
-                                    pvselect=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --ok-label "Create" --checklist "Select the physical volumes to add to the volume group\n\n       Size   Free    UUID" 0 80 0 $pvfreelist)
+                                3) listpvfree
+                                    pvselect=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --ok-label "Create" --checklist "Select the physical volumes to add to the volume group\n\n       Name   Size   Free    UUID" 0 80 0 $pvfreelist)
                                     if [ $? -eq 0 ]; then
                                         newvgname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --inputbox "Please enter the name of the new volume group" 0 0)
                                         if [ $? -eq 0 ]; then
@@ -970,10 +997,11 @@ pisel() {
     while true;do
         piscript=$(dialog --backtitle "$bt" --title "$tt" --stdout --ok-label "Next" --cancel-label "Back" --extra-button --extra-label "Skip" --checklist "Choose one of the presets below, or do it later\nUse arrows key and space" 0 0 0 \
         "gaming" "Cross-play suite for gamers" off \
-        "office" "Suit for office work, with many useful softwares" off \
+        "office" "Suit for office work or content creation, with many useful softwares" off \
         "design" "Suit for graphic/art/architecture design" off \
         "devel" "Developing enviroment for coders/developers" off \
         "server" "Tools and utilities for a mini host server" off \
+        "security" "Tools and softwares for white-hat hacking/penetration testing" off \
         $picustom)
         case $? in
             0)
