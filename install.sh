@@ -743,7 +743,6 @@ diskman() {
                                     pvcreate $devdisk
                                     ;;
                                 "Encrypted") while true;do
-                                    # ask for password
                                     ecryptpass=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --inputbox "Please enter the password for the encrypted filesystem" 0 0)
                                     if [ $? -ne 0 ]; then
                                         break
@@ -800,19 +799,82 @@ diskman() {
                                 vgname=$(echo "$line" | awk '{print $1}')
                                 vginfo="$(echo "$line" | awk '{for (i=2; i<NF; i++) printf $i " \t"; print $NF}')"
                                 vglist+=( "$vgname" "$vginfo" )
-                            done <<< "$(vgs -o vg_name,vg_size,vg_free --noheadings)"
+                            done <<< "$(vgs -o vg_name,vg_size,vg_free,vg_uuid --noheadings)"
                             #$(vgs --noheadings -o vg_name)
                                 # vg_pv="$(printf "%s," $(vgs --noheadings -o pv_name $vgname))"
                                 # vg_pv=${vg_pv%,}
                                 # vg_lv="$(printf "%s," $(vgs --noheadings -o lv_name $vgname))"
                                 # vg_lv=${vg_lv%,}
                                 # vginfo+=""$'\t'"$vg_pv"$'\t'"$vg_lv"
-                            pvlist=$(pvs --noheadings -o pv_name)
+                            # pvlist=$(pvs --noheadings -o pv_name)
                             vgselect=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --extra-button --extra-label "Create" --menu "Select the volume group to manage\n\n       Name   Size       Free    UUID" 0 80 0 ${vglist[@]})
                             case $? in
-                                0) ;;
-                                1) ;;
-                                3) ;;
+                                0) while true; do
+                                    pvofvg=( $(vgs --noheadings -o pv_name $vgselect) )
+                                    lvofvg=( $(vgs --noheadings -o lv_name $vgselect) )
+                                    vgoption=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --menu "Volume Group Infomation:\n\nVolume Group Name: $vgselect\nSize: $(vgs --noheadings -o vg_size $vgselect)\nFree: $(vgs --noheadings -o vg_free $vgselect)\nUUID: $(vgs --noheadings -o vg_uuid $vgselect)\n\Physical Volumes: ${(printf "%s, " ${pvofvg[@]})%,}\nLogical Volumes: ${(printf "%s, " ${lvofvg[@]})%,}\n\nSelect an option:" 0 80 0 \
+                                        "Manage PV" "Manage Physical Volume attached to this Volume Group" \
+                                        "Manage LV" "Manage Logical Volume on this Volume Group" \
+                                        "Rename" "Rename this Volume Group" \
+                                        "Remove" "Remove this Volume Group")
+                                    if [ $? -ne 0 ]; then
+                                        break
+                                    fi
+                                    case $vgoption in
+                                        "Manage PV");;
+                                        "Manage LV");;
+                                        "Rename") while true; do
+                                            newvgname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --inputbox "Enter the new name for the volume group" 0 0)
+                                            if [ $? -ne 0 ]; then
+                                                break
+                                            fi
+                                            if [ -z $newvgname ]; then
+                                                dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the new name!"
+                                                continue
+                                            fi
+                                            if vgs --noheadings -o vg_name | grep -q $newvgname; then
+                                                dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: The volume group $newvgname already exists!"
+                                                continue
+                                            fi
+                                            vgchange -a n $vgselect
+                                            vgrename $vgselect $newvgname
+                                            vgchange -a y $newvgname
+                                            break
+                                        done ;;
+                                        "Remove")
+                                            vgchange -an $vgselect
+                                            vgremove $vgselect
+                                            break
+                                        ;;
+                                    esac
+                                    break
+                                done ;;
+                                1) break ;;
+                                3) pvfreelist=""
+                                    while IFS= read -r line; do
+                                        pvinfo="$(pvs --noheadings -o pv_size,pv_free,pv_uuid $line)"
+                                        pvfreelist+="\"$line\" \"$pvinfo\" off "
+                                    done <<< "$(pvs --noheadings -o pv_name | grep -vf <(vgs --noheadings -o pv_name))"
+                                    pvselect=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --ok-label "Create" --checklist "Select the physical volumes to add to the volume group\n\n       Size   Free    UUID" 0 80 0 $pvfreelist)
+                                    if [ $? -eq 0 ]; then
+                                        newvgname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --inputbox "Please enter the name of the new volume group" 0 0)
+                                        if [ $? -eq 0 ]; then
+                                            if [ -z $newvgname ]; then
+                                                dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the name of the new volume group!"
+                                                continue
+                                            fi
+                                            if vgs $newvgname > /dev/null 2>&1; then
+                                                dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: The volume group $newvgname already exists!"
+                                                continue
+                                            fi
+                                            if vgcreate $newvgname $pvselect; then
+                                                dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "Successfully created the volume group $newvgname"
+                                            else
+                                                dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: Could not create the volume group $newvgname!"
+                                            fi
+                                        fi
+                                    fi
+                                ;;
                             esac
                         done ;;
                     esac
