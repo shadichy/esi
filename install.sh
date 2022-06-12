@@ -823,7 +823,7 @@ diskman() {
                                 0) while true; do
                                     pvofvg=( $(vgs --noheadings -o pv_name $vgselect) )
                                     lvofvg=( $(vgs --noheadings -o lv_name $vgselect) )
-                                    vgoption=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --menu "Volume Group Infomation:\n\nVolume Group Name: $vgselect\nSize: $(vgs --noheadings -o vg_size $vgselect)\nFree: $(vgs --noheadings -o vg_free $vgselect)\nUUID: $(vgs --noheadings -o vg_uuid $vgselect)\n\Physical Volumes: ${(printf "%s, " ${pvofvg[@]})%,}\nLogical Volumes: ${(printf "%s, " ${lvofvg[@]})%,}\n\nSelect an option:" 0 80 0 \
+                                    vgoption=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --menu "Volume Group Infomation:\n\nVolume Group Name: $vgselect\nSize: $(vgs --noheadings -o vg_size $vgselect)\nFree: $(vgs --noheadings -o vg_free $vgselect)\nUUID: $(vgs --noheadings -o vg_uuid $vgselect)\nPhysical Volumes: ${(printf "%s, " ${pvofvg[@]})%,}\nLogical Volumes: ${(printf "%s, " ${lvofvg[@]})%,}\n\nSelect an option:" 0 80 0 \
                                         "Manage PV" "Manage Physical Volume attached to this Volume Group" \
                                         "Manage LV" "Manage Logical Volume on this Volume Group" \
                                         "Rename" "Rename this Volume Group" \
@@ -840,7 +840,44 @@ diskman() {
                                             done
                                             pvselect=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --extra-button --extra-label "Add" --ok-label "Select" --menu "Select the physical volume to manage\n\n       Name   Size       Free    UUID" 0 80 0 ${pvlist[@]})
                                             case $? in
-                                                0) ;;
+                                                0) while true; do
+                                                    pvopts=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --menu "Physical Volume Infomation:\n\nPhysical Volume Name:$pvselect\nSize: $(pvs --noheadings -o pv_size $pvselect)\nFree: $(pvs --noheadings -o pv_free $pvselect)\nUUID: $(pvs --noheadings -o pv_uuid $pvselect)\nVolume Group: ${(printf "%s, " $(pvs --noheadings -o vg_name $pvselect))%,}\n\nSelect an option:" 0 80 0 \
+                                                        "Replace" "Replace this Physical Volume with a new one" \
+                                                        "Remove from VG" "Remove this Physical Volume from this Volume Group" \
+                                                        "Remove" "Completely remove this Physical Volume" )
+                                                    if [ $? -ne 0 ]; then
+                                                        break
+                                                    fi
+                                                    case $pvopts in
+                                                        "Replace") while true; do
+                                                            listpvfree
+                                                            pvnew=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --menu "Select the new Physical Volume to replace this one\n\n       Name   Size       Free    UUID" 0 80 0 ${pvfreelist[@]})
+                                                            if [ $? -ne 0 ]; then
+                                                                break
+                                                            fi
+                                                            vgchange -a n $vgselect
+                                                            pvmove $pvselect $pvnew
+                                                            vgchange -a y $vgselect
+                                                            break
+                                                            
+                                                        done ;;
+                                                        "Remove from VG") 
+                                                            vgchange -a n $vgselect
+                                                            pvmove $pvselect
+                                                            vgreduce $vgselect $pvselect
+                                                            vgchange -a y $vgselect
+                                                            break
+                                                        ;;
+                                                        "Remove") 
+                                                            vgchange -a n $vgselect
+                                                            pvmove $pvselect
+                                                            vgreduce $vgselect $pvselect
+                                                            pvremove $pvselect
+                                                            vgchange -a y $vgselect
+                                                            break
+                                                        ;;
+                                                    esac
+                                                done ;;
                                                 1) break ;;
                                                 3) listpvfree
                                                     pvselect=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --ok-label "Select" --checklist "Select the physical volume to add to this Volume Group\n\n       Name   Size       Free    UUID" 0 80 0 ${pvfreelist[@]})
@@ -853,7 +890,33 @@ diskman() {
                                                 ;;
                                             esac
                                         done ;;
-                                        "Manage LV");;
+                                        "Manage LV") while true; do
+                                            lvlist=("")
+                                            for lv in ${lvofvg[@]}; do
+                                                lvinfo="$(echo "$(lvs --noheadings -o lv_size,lv_free,lv_uuid $lv)" | awk '{for (i=1; i<NF; i++) printf $i " \t"; print $NF}')"
+                                                lvlist+=( "$lv" "$lvinfo" )
+                                            done
+                                            lvselect=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --cancel-label "Back" --extra-button --extra-label "Remove" --ok-label "Rename" --menu "Select the physical volume to manage\n\n       Name   Size       Free    UUID" 0 80 0 ${lvlist[@]})
+                                            case $? in
+                                                0) while true; do
+                                                    newlvname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --inputbox "Enter the new name for the logical partition" 0 0)
+                                                    if [ $? -ne 0 ]; then
+                                                        break
+                                                    fi
+                                                    if [ -z $newlvname ]; then
+                                                        dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: You didn't entered the new name!"
+                                                        continue
+                                                    fi
+                                                    if lvs --noheadings -o lv_name | grep -q $newlvname; then
+                                                        dialog --backtitle "$bt" --title "Partition the harddrive" --msgbox "ERROR: The logical partition $newlvname already exists!"
+                                                        continue
+                                                    fi
+                                                    lvrename $lvselect $newlvname
+                                                done ;;
+                                                3) lvremove $vgselect/$lvselect ;;
+                                            esac
+                                            break
+                                        done ;;
                                         "Rename") while true; do
                                             newvgname=$(dialog --backtitle "$bt" --title "Partition the harddrive" --stdout --inputbox "Enter the new name for the volume group" 0 0)
                                             if [ $? -ne 0 ]; then
