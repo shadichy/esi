@@ -1,0 +1,17 @@
+blender
+gimp
+wps-office
+onlyoffice-desktopeditors
+meld
+teamviewer
+remmina
+kdenlive
+flameshot
+vlc
+klipper
+simplescreenrecorder
+kate
+florence
+audacity
+qalculate
+kdeconnect
