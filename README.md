@@ -102,3 +102,8 @@
   
   
   ## III. FAQ
+  
+  ## IV. Update dự án:
+  Hiện tại, preset design, server, security, devl office cho debian amd64 đã đầy đủ :))
+  
+  
