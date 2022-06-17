@@ -2,4 +2,4 @@
 /buildimage/root.img
 out
 pkglist
-
+.DS_Store
