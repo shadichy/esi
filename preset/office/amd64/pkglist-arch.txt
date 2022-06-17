@@ -17,3 +17,12 @@ florence
 audacity
 qalculate
 kdeconnect
+texlive-most
+texlive-lang
+clamav
+laverna
+korganizer
+kodi
+texmaker
+qalculate
+florence
