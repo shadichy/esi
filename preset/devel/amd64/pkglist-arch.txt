@@ -24,3 +24,9 @@ firefox
 kdeconnect
 r-linux
 debhelper
+git
+docker
+kubernetes-control-plane
+Kubernetes-node
+
+

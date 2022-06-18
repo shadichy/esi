@@ -3,3 +3,17 @@ gimp
 inkscape
 krita
 flameshot
+karbon
+kdenlive
+muse
+freecad
+sagemath
+audacity
+cecilia
+lightzone
+darktable
+shotcut
+obs-studio
+photoflate
+digikam
+rawtherapee
