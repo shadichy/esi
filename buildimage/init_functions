@@ -413,7 +413,7 @@ default_mount_handler() {
             done
         fi
         postinstall_mounted=1;
-        if [ ! -z "$overlay" ]; then
+        if [ "$overlay" ]; then
             if [ "$overlay_mounted" -ne 1 ] && ! mount ${overlayfstype:+-t $overlayfstype} ${overlayflags:+-o $overlayflags} "$overlay" /overlay;then
                 call_err "Failed to mount $overlay on /overlay!";
                 continue;

@@ -23,6 +23,7 @@ delfile usr/share/i18n/locales $(ls | grep -Ev "en|vi|translit|POSIX|iso")
 delfile usr/share/locale $(ls -d -- */ | grep -Ev "en|vi")
 delfile usr/share/qt/translations $(ls | grep -v "en")
 delfile usr/share/unicode/cldr/*/* $(ls | grep -Ev "en|vi|root")
+rm -rf usr/include/*
 
 rm -rf .Trash-*
 rm -rf var/lib/pacman
