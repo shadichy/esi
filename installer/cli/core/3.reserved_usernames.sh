@@ -1,3 +1,5 @@
+#!/bin/bash
+reserved_usernames=(
 # List of reserved usernames used to avoid any conflict when creating a user.
 # https://salsa.debian.org/installer-team/user-setup/raw/master/reserved-usernames
 
@@ -119,3 +121,4 @@ statd
 syslog
 telnetd
 tftpd
+)

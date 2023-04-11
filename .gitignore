@@ -1,5 +1,5 @@
-/buildimage/mounts
-/buildimage/root.img
-out
+/buildiso/mounts
+/buildiso/root.img
+
 pkglist
 .DS_Store
