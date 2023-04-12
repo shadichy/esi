@@ -2,7 +2,7 @@
 
 netcheck() {
 	while true; do
-		if curl -I http://archlinux.org || wget -q --spider http://archlinux.org || nc -zw1 archlinux.org 80; then
+		if curl -I "$URL" || wget -q --spider "$URL" || nc -zw1 "$SFS_SRV" 80; then
 			CONNECTED=2
 			OFFLINE=0
 			NET_STAT="*"

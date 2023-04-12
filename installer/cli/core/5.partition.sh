@@ -3,58 +3,68 @@
 randstr() { tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 8 | head -n 1; }
 ynwarn() { dbox --extra-button --extra-label "No" --no-label "Back" --yesno "Warning: $*" 0 0; }
 
+blk() { lsblk -n -r "$@"; }
+
+blk_d() {
+	opt=$1
+	shift
+	blk -d -o "$opt" "$@"
+}
+
+blk_p() {
+	opt=$1
+	shift
+	blk -p -o "$opt" "$@"
+}
+
+blk712() {
+	opt=$1
+	shift
+	blk_p "$opt" -e 7,11,251 "$@"
+}
+
 mount_check() {
-	unmount() { mountpoint -q "$*" && umount -R "$*"; }
-	for dir in /mnt/*; do unmount -R "$dir"; done
-	unmount /mnt
+	umount -R /mnt* 2>/dev/null
+	umount -R /mnt 2>/dev/null
 	free | awk '/^Swap:/ {exit !"$2"}' && swapoff -a
-	for vg in $(vgs --noheadings -o vg_name); do vgchange -ay "$vg"; done
+	vgchange -ay
 }
 
 disklst() {
 	unset devs
-	for dev in $(lsblk -M -n -p -r -e 7,11,251 -o NAME); do
-		[ "$(lsblk -n -r -o MOUNTPOINT "$dev")" ] && continue
-		devsz=$(lsblk -d -n -r -o SIZE "$dev")
-		devtp=$(lsblk -d -n -o TYPE "$dev")
-		devfs=$(lsblk -d -n -r -o FSTYPE "$dev")
+	for dev in $(blk712 NAME -M); do
+		[ "$(blk_d MOUNTPOINT "$dev")" ] && continue
 		devmp=" "
-		hasmntpt=$(say "${MNT_LST[@]}" | grep -w "$dev")
-		[ "$hasmntpt" ] && devmp=$(echo "$hasmntpt" | awk '{print "$2"}')
-		devs+=("$dev"$'\t'"" "$devtp"$'\t'"$devfs"$'\t'"$devsz"$'\t'"$devmp")
+		hasmntpt=$(grep -w "$dev" <<<"${MNT_LST[@]}")
+		[ "$hasmntpt" ] && devmp=$(awk '{print "$2"}' <<<"$hasmntpt")
+		devs+=("$dev"$'\t'"" "$(blk_d TYPE "$dev")"$'\t'"$(blk_d FSTYPE "$dev")"$'\t'"$(blk_d SIZE "$dev")"$'\t'"$devmp")
 	done
 }
 
+create_part() {
+	while IFS= read -r f; do
+		part_size=$(awk '{print "$3"}'<<<"$f")
+		((${part_size%MiB} <= 4096)) && continue
+
+		part_start=$(awk '{print "$1"}'<<<"$f")
+		part_end=$(awk '{print "$2"}'<<<"$f")
+		part_table_before=("$(blk712 NAME "$1")")
+		printf "fix\n" | parted ---pretend-input-tty "$1" mkpart "$part_type" ext4 "$part_start" "$part_size" || continue
+
+		part_table_after=("$(blk712 NAME "$1")")
+		part_id=$(tr ' ' '\n' <<<"${part_table_before[*]} ${part_table_after[*]}" | sort -u)
+		[ "$part_table" = "msdos" ] && ! printf "fix\n" | parted ---pretend-input-tty "$part_id" -name "$LABEL" && continue
+
+		mkfs.ext4 -L "$LABEL" "$part_id"
+		e2fsck -f "$part_id"
+		MNT_LST=("$part_id /")
+		diskconfirm=1
+	done <<<"$(printf "fix\n" | parted ---pretend-input-tty "$1" unit MiB print free | grep "Free Space")"
+}
+
 diskchoose() {
-	local diskconfirm=0
+	diskconfirm=0
 	title="Partition the harddrive"
-
-	listblk() {
-		opt=$1
-		shift
-		lsblk -n -p -r -e 7,11,251 -o "$opt" "$@"
-	}
-
-	create_part() {
-		while IFS= read -r f; do
-			part_size=$(echo "$f" | awk '{print "$3"}')
-			((${part_size%MiB} <= 4096)) && continue
-
-			part_start=$(say "$f" | awk '{print "$1"}')
-			part_end=$(say "$f" | awk '{print "$2"}')
-			part_table_before=("$(listblk NAME "$d")")
-			printf "fix\n" | parted ---pretend-input-tty "$d" mkpart "$part_type" ext4 "$part_start" "$part_size" || continue
-
-			part_table_after=("$(listblk NAME "$d")")
-			part_id=$(echo "${part_table_before[*]} ${part_table_after[*]}" | tr ' ' '\n' | sort | uniq -u)
-			[ "$part_table" = "msdos" ] && ! printf "fix\n" | parted ---pretend-input-tty "$part_id" -name "$LABEL" && continue
-
-			e2label "$part_id" "$LABEL"
-			e2fsck -f "$part_id"
-			MNT_LST=("$part_id /")
-			diskconfirm=1
-		done <<<"$(printf "fix\n" | parted ---pretend-input-tty "$d" unit MiB print free | grep "Free Space")"
-	}
 
 	while true; do
 		disk=$(dbox --cancel-label "Exit to Menu" --menu "Disk/partition options" 0 0 0 \
@@ -63,7 +73,7 @@ diskchoose() {
 			"Manual" "Customize disk/partition layout")
 		case "$disk" in
 		"Auto")
-			for d in $(listblk NAME -d); do
+			for d in $(blk712 NAME -d); do
 				part_table=$(printf "fix\n" | parted ---pretend-input-tty "$d" print | grep "Partition Table" | awk '{print "$3"}')
 				case "$part_table" in
 				"gpt") part_type="$LABEL" ;;
@@ -71,13 +81,13 @@ diskchoose() {
 				*) continue ;;
 				esac
 
-				create_part
+				create_part "$d"
 				[ "$(grep -w "/" <<<"${MNT_LST[@]}" | awk '{print "$2"}')" ] && break
 
-				for p in $(listblk NAME "$d" | grep -vw "$d"); do
-					[ "$(lsblk -n -r -o MOUNTPOINT "$p")" ] && continue
+				for p in $(blk712 NAME "$d" | grep -vw "$d"); do
+					[ "$(blk -o MOUNTPOINT "$p")" ] && continue
 
-					part_fs=$(lsblk -d -n -r -o FSTYPE "$p")
+					part_fs=$(blk_d FSTYPE "$p")
 					[[ "$part_fs" =~ "crypt".* ]] || [[ "$part_fs" =~ "swap".* ]] || [[ "$part_fs" =~ "LVM".* ]] || [[ "$part_fs" =~ "raid".* ]] || [[ -z "$part_fs" ]] && continue
 
 					mount "$p" /mnt || continue
@@ -91,17 +101,19 @@ diskchoose() {
 					partinmb=$(printf "fix\n" | parted ---pretend-input-tty "$p" unit MiB print | grep -w "1" | awk '{print "$3"}')
 					printf "fix\n" | parted ---pretend-input-tty "$p" resizepart 1 $((${partinmb%MiB} - 4096)) || continue
 
-					create_part
+					create_part "$d"
 					[ $diskconfirm = 1 ] && return
 				done
 			done
 			;;
 		"Basic")
+			local old_tt=$title
 			simplediskman
+			title=$old_tt
 			[ "$diskconfirm" = 1 ] && return
 			;;
 		"Manual")
-			if dialog --backtitle "$BACKTITLE" --title "Manual partitioning" --yes-label "Use Terminal interface" --no-label "Use Command line interface" --yesno "Would you like to use the terminal interface or the command line interface?" 0 0; then
+			if wraptt "Manual partitioning" dbox --yes-label "Use Terminal interface" --no-label "Use Command line interface" --yesno "Would you like to use the terminal interface or the command line interface?" 0 0; then
 				advcd_diskman
 				[ "$diskconfirm" = 1 ] && return
 			fi
@@ -112,13 +124,13 @@ diskchoose() {
 			saybr ""
 			saybr "\e[1;33m### Physical Disk/Partition Management ###\e[0m"
 			saybr "\e[1;36m"
-			saybr "\tUse 'lsblk' to see the list of disks/partitions."
+			saybr "\tUse 'lsblk' or 'blkid' to see the list of disks/partitions."
 			saybr "\tUse 'fdisk', 'cfdisk', 'parted' commands or any CLI-based disk utilities to manage disks/partitions"
 			saybr ""
 			saybr "\e[1;33m### Logical Volume Management ###\e[0m"
 			saybr "\e[1;36m"
-			saybr "\tUse pvdisplay, pvcreate, pvremove commands to manage physical volumes"
-			saybr "\tUse vgdisplay, vgcreate, vgremove commands to manage volume groups"
+			saybr "\tUse pvdisplay, pvcreate, pvremove commands to manage Physical Volumes"
+			saybr "\tUse vgdisplay, vgcreate, vgremove commands to manage Volume Groups"
 			saybr "\tUse lvdisplay, lvcreate, lvremove commands to manage logical volumes"
 			saybr ""
 			saybr "\e[1;33m### Encrypted Volume Management ###\e[0m"
@@ -150,17 +162,18 @@ simplediskman() {
 	while true; do
 		devdisk=$(dbox --cancel-label "Back" --ok-label "Select" --menu "Select the disk/partition for ExtOS to be installed on. Note that the disk/partition you select will be erased, but not until you have confirmed the changes.\n\nSelect the disk in the list below:" 0 80 0 "${devs[@]}") || break
 
-		devtype=$(lsblk -d -n -r -o TYPE "$devdisk")
+		devtype=$(blk_d TYPE "$devdisk")
 		case "$devtype" in
 		disk) dorpb="entire disk" ;;
 		*) dorpb="partition" ;;
 		esac
 
-		dialog --backtitle "$BACKTITLE" --title "Confirm install on $devdisk" --yes-label "Confirm" --no-label "Back" --yesno "Are you sure you want to install ExtOS on the $dorpb $devdisk?\n\nThis will erase all data on the $devdisk, and cannot be UN_STAT." 0 0 || continue
+		wraptt "Confirm install on $devdisk" yesnobox "Are you sure you want to install ExtOS on the $dorpb $devdisk?\n\nThis will erase all data on the $devdisk, and cannot be recovered." 0 0 || continue
 
-		dbox --yesno "Swap is a partition that serves as overflow space for your RAM.\nSwap is not required for ExtOS to run, but it is recommended to use swap for better performance on low-end hardware or hibernation.\n\nDo you want to use swap?" 0 0
+		box "Swap is a partition that serves as overflow space for your RAM.\nSwap is not required for ExtOS to run, but it is recommended to use swap for better performance on low-end hardware or hibernation.\n\nDo you want to use swap?" 0 0
 		useswp=$?
 
+		title="Formatting $devdisk"
 		case "$devtype" in
 		"part")
 			rootfsdev="$devdisk"
@@ -168,11 +181,11 @@ simplediskman() {
 			#	 if [ useencrypt != 1 ]; then
 			#		 break
 			#	 fi
-			#	 if [ $(lsblk -d -n -r -o TYPE "$rootfsdev") = "crypt" ]; then
+			#	 if [ $(blk_d TYPE "$rootfsdev") = "crypt" ]; then
 			#		 break
 			#	 fi
-			#	 parentnode="/dev/$(lsblk -d -n -r -o PKNAME "$rootfsdev")"
-			#	 # for p in $(lsblk -p -n -r -o NAME "$parentnode" | grep -vw "$parentnode"); do
+			#	 parentnode="/dev/$(blk_d PKNAME "$rootfsdev")"
+			#	 # for p in $(blk_p NAME "$parentnode" | grep -vw "$parentnode"); do
 			#	 #	 if [ "$(parted -s "$p" print | grep -w "boot")" ]; then
 			#	 #		 echo "boot at $p"
 			#	 #	 fi
@@ -186,17 +199,17 @@ simplediskman() {
 			#	 rootfsdev="/dev/mapper/$randname"
 			#	 break
 			# done
-			dialog --backtitle "$BACKTITLE" --title "Formatting $devdisk" --infobox "Formatting $devdisk as ext4" 0 0
+			infobox "Formatting $devdisk as ext4"
 
 			if ! mkfs.ext4 -F -L EXTOS "$devdisk"; then
-				dialog --backtitle "$BACKTITLE" --title "Formatting $devdisk" --msgbox "Failed to format $devdisk" 0 0
+				msgbox "Failed to format $devdisk"
 				continue
 			fi
 
 			MNT_LST+=("$devdisk /")
 			flagasboot() {
 				parted -s "$devdisk" set 1 boot on && return
-				dialog --backtitle "$BACKTITLE" --title "Formatting $devdisk" --msgbox "Failed to set $devdisk as bootable" 0 0
+				msgbox "Failed to set $devdisk as bootable"
 				continue
 			}
 
@@ -213,37 +226,37 @@ simplediskman() {
 			esac
 			;;
 		"disk")
-			dialog --backtitle "$BACKTITLE" --title "Formatting $devdisk" --infobox "Creating GPT partition table on $devdisk" 0 0
+			infobox "Creating GPT partition table on $devdisk"
 			if ! parted -s "$devdisk" mklabel gpt; then
-				dialog --backtitle "$BACKTITLE" --title "Formatting $devdisk" --msgbox "Failed to create GPT partition table on $devdisk" 0 0
+				msgbox "Failed to create GPT partition table on $devdisk"
 				continue
 			fi
 
-			dialog --backtitle "$BACKTITLE" --title "Formatting $devdisk" --infobox "Creating EFI system partition" 0 0
+			infobox "Creating EFI system partition"
 			if ! parted -s "$devdisk" mkpart primary fat32 1 100M; then
-				dialog --backtitle "$BACKTITLE" --title "Formatting $devdisk" --msgbox "Failed to create EFI system partition on $devdisk" 0 0
+				msgbox "Failed to create EFI system partition on $devdisk"
 				continue
 			fi
 
-			ESP=$(lsblk -n -r -p -o NAME "$devdisk" | grep -vw "$devdisk")
+			ESP=$(blk_p NAME "$devdisk" | grep -vw "$devdisk")
 			parted -s "$devdisk" name 1 EFI
 			parted -s "$devdisk" set 1 esp on
 			parted -s "$ESP" set 1 boot on
 			mkfs.fat -F32 -n EFI "$ESP"
 			MNT_LST+=("$ESP /boot$([ "$BIOSMODE" = uefi ] && say /efi)")
 
-			dialog --backtitle "$BACKTITLE" --title "Formatting $devdisk" --infobox "Creating partition to install ExtOS" 0 0
+			infobox "Creating partition to install ExtOS"
 			if ! parted -s "$devdisk" mkpart primary ext4 101M 100%; then
-				dialog --backtitle "$BACKTITLE" --title "Formatting $devdisk" --msgbox "Failed to create partition on $devdisk" 0 0
+				msgbox "Failed to create partition on $devdisk"
 				continue
 			fi
 
-			rootfsdev=$(lsblk -n -r -p -o NAME "$devdisk" | tail -n 1)
+			rootfsdev=$(blk_p NAME "$devdisk" | tail -n 1)
 			parted -s "$devdisk" name 2 EXTOS
 
 			useencrypt() {
 				if ! cryptsetup luksFormat "$rootfsdev"; then
-					dialog --backtitle "$BACKTITLE" --title "Formatting $devdisk" --msgbox "Failed to format $rootfsdev" 0 0
+					msgbox "Failed to format $rootfsdev"
 					continue
 				fi
 				randname=$(randstr)
@@ -253,7 +266,7 @@ simplediskman() {
 
 			uselvm() {
 				if ! pvcreate "$rootfsdev"; then
-					dialog --backtitle "$BACKTITLE" --title "Formatting $devdisk" --msgbox "Failed to create physical volume on $rootfsdev" 0 0
+					msgbox "Failed to create Physical Volume on $rootfsdev"
 					continue
 				fi
 				randname=$(randstr)
@@ -262,7 +275,7 @@ simplediskman() {
 				rootfsdev="/dev/mapper/$randname-EXTOS"
 			}
 
-			devsize=$(lsblk -d -n -r -b -o SIZE "$devdisk")
+			devsize=$(blk_d SIZE -b "$devdisk")
 			if ((${devsize%MiB} >= 8589934592)); then
 				haslvm=""
 				if ((${devsize%MiB} >= 34359738368)); then
@@ -298,6 +311,63 @@ listpvfree() {
 	done <<<"$(pvs --noheadings -o pv_name | grep -vf <(vgs --noheadings -o pv_name))"
 }
 
+advcd_lvmpvopts() {
+	while true; do
+		vg_grs=($(pvs --noheadings -o vg_name "$pvselect"))
+
+		case "$(dbox --cancel-label "Back" --menu "Physical Volume Infomation:\n\nPhysical Volume Name:$pvselect\nSize: $(pvs --noheadings -o pv_size "$pvselect")\nFree: $(pvs --noheadings -o pv_free "$pvselect")\nUUID: $(pvs --noheadings -o pv_uuid "$pvselect")\nVolume Group: $(append_comma "${vg_grs[*]}")\n\nSelect an option:" 0 80 0 \
+			"Replace" "Replace this Physical Volume with a new one" \
+			"Remove from VG" "Remove this Physical Volume from this Volume Group" \
+			"Remove" "Completely remove this Physical Volume")" in
+		"Replace")
+			ynwarn "Are you sure about replacin Physical Volume $pvselect with a new one?"
+			case $? in
+			1) continue ;;
+			3) break ;;
+			esac
+			while true; do
+				listpvfree
+				pvnew=$(dbox --cancel-label "Back" --menu "Select the new Physical Volume to replace this one\n" 0 80 0 "${pvfreelist[@]}") || break
+
+				vgchange -a n "$vgselect" &&
+					pvmove "$pvselect" "$pvnew" &&
+					vgchange -a y "$vgselect" ||
+					errbox "Could not replace Physical Volume $pvselect with $pvnew.\n\nPlease try again."
+				return
+			done
+			;;
+		"Remove from VG")
+			ynwarn "Are you sure about removing Volume Group $vgselect?"
+			case $? in
+			1) continue ;;
+			3) break ;;
+			esac
+			vgchange -a n "$vgselect" &&
+				pvmove "$pvselect" &&
+				vgreduce "$vgselect" "$pvselect" &&
+				vgchange -a y "$vgselect" ||
+				errbox "Could not remove Physical Volume $pvselect to the Volume Group $vgselect.\n\nPlease check the Volume Group and try again."
+			break
+			;;
+		"Remove")
+			ynwarn "Are you sure about removing Volume Group $vgselect?"
+			case $? in
+			1) continue ;;
+			3) break ;;
+			esac
+			vgchange -a n "$vgselect" &&
+				pvmove "$pvselect" &&
+				vgreduce "$vgselect" "$pvselect" &&
+				pvremove "$pvselect" &&
+				vgchange -a y "$vgselect" ||
+				errbox "Could not remove Volume Group $vgselect.\n\nPlease try again."
+			break
+			;;
+		*) break ;;
+		esac
+	done
+}
+
 advcd_lvmpv() {
 	while true; do
 		pvlist=("")
@@ -305,68 +375,15 @@ advcd_lvmpv() {
 			pvinfo="$(pvs --noheadings -o pv_size,pv_free,pv_uuid "$pv" | awk '{for (i=1; i<NF; i++) printf "$i" " \t"; print $NF}')"
 			pvlist+=("$pv" "$pvinfo")
 		done
-		pvselect=$(dbox --cancel-label "Back" --extra-button --extra-label "Add" --ok-label "Select" --menu "Select the physical volume to manage\n" 0 80 0 "${pvlist[@]}")
+		pvselect=$(dbox --cancel-label "Back" --extra-button --extra-label "Add" --ok-label "Select" --menu "Select the Physical Volume to manage\n" 0 80 0 "${pvlist[@]}")
 		case $? in
-		0) while true; do
-			vg_grs=($(pvs --noheadings -o vg_name "$pvselect"))
-			pvopts=$(dbox --cancel-label "Back" --menu "Physical Volume Infomation:\n\nPhysical Volume Name:$pvselect\nSize: $(pvs --noheadings -o pv_size "$pvselect")\nFree: $(pvs --noheadings -o pv_free "$pvselect")\nUUID: $(pvs --noheadings -o pv_uuid "$pvselect")\nVolume Group: $(append_comma "${vg_grs[*]}")\n\nSelect an option:" 0 80 0 \
-				"Replace" "Replace this Physical Volume with a new one" \
-				"Remove from VG" "Remove this Physical Volume from this Volume Group" \
-				"Remove" "Completely remove this Physical Volume") || break
-
-			case "$pvopts" in
-			"Replace")
-				ynwarn "Are you sure about replacin Physical Volume $pvselect with a new one?"
-				case $? in
-				1) continue ;;
-				3) break ;;
-				esac
-				while true; do
-					listpvfree
-					pvnew=$(dbox --cancel-label "Back" --menu "Select the new Physical Volume to replace this one\n" 0 80 0 "${pvfreelist[@]}") || break
-
-					vgchange -a n "$vgselect" &&
-						pvmove "$pvselect" "$pvnew" &&
-						vgchange -a y "$vgselect"
-					sleep 3
-					return
-				done
-				;;
-			"Remove from VG")
-				ynwarn "Are you sure about removing Volume Group $vgselect?"
-				case $? in
-				1) continue ;;
-				3) break ;;
-				esac
-				vgchange -a n "$vgselect" &&
-					pvmove "$pvselect" &&
-					vgreduce "$vgselect" "$pvselect" &&
-					vgchange -a y "$vgselect"
-				sleep 3
-				break
-				;;
-			"Remove")
-				ynwarn "Are you sure about removing Volume Group $vgselect?"
-				case $? in
-				1) continue ;;
-				3) break ;;
-				esac
-				vgchange -a n "$vgselect" &&
-					pvmove "$pvselect" &&
-					vgreduce "$vgselect" "$pvselect" &&
-					pvremove "$pvselect" &&
-					vgchange -a y "$vgselect"
-				sleep 3
-				break
-				;;
-			esac
-		done ;;
+		0) advcd_lvmpvopts ;;
 		1) break ;;
 		3)
 			listpvfree
-			pvselect=$(dbox --cancel-label "Back" --ok-label "Select" --checklist "Select the physical volume to add to this Volume Group\n" 0 80 0 "${pvfreelist[@]}") || continue
+			pvselect=$(dbox --cancel-label "Back" --ok-label "Select" --checklist "Select the Physical Volume to add to this Volume Group\n" 0 80 0 "${pvfreelist[@]}") || continue
 			vgextend "$vgselect" "$pvselect" && break
-			errbox "Could not add the physical volume to the volume group.\n\nPlease check the volume group and try again."
+			errbox "Could not add the Physical Volume to the Volume Group.\n\nPlease check the Volume Group and try again."
 			;;
 		esac
 	done
@@ -386,20 +403,18 @@ advcd_lvm() {
 			vglist+=("$(awk '{print "$1"}' <<<"$line")" "$(awk '{for (i=2; i<NF; i++) printf "$i" " \t"; print $NF}' <<<"$line")")
 		done <<<"$(vgs -o vg_name,vg_size,vg_free,vg_uuid --noheadings)"
 
-		vgselect=$(dbox --cancel-label "Back" --extra-button --extra-label "Create" --ok-label "Select" --help-button --help-label "Done" --menu "Select the volume group to manage\n" 0 80 0 "${vglist[@]}")
+		vgselect=$(dbox --cancel-label "Back" --extra-button --extra-label "Create" --ok-label "Select" --help-button --help-label "Done" --menu "Select the Volume Group to manage\n" 0 80 0 "${vglist[@]}")
 		case $? in
 		0)
 			while true; do
 				pvofvg=($(vgs --noheadings -o pv_name "$vgselect"))
 				lvofvg=($(vgs --noheadings -o lv_name "$vgselect"))
 
-				vgoption=$(dbox --cancel-label "Back" --menu "Volume Group Infomation:\n\nVolume Group Name: $vgselect Size: $(vgs --noheadings -o vg_size "$vgselect")\nFree: $(vgs --noheadings -o vg_free "$vgselect")\nUUID: $(vgs --noheadings -o vg_uuid "$vgselect")\nPhysical Volumes: $(append_comma "${pvofvg[*]}")\nLogical Volumes: $(append_comma "${lvofvg[*]}")\n\nSelect an option:" 0 80 0 \
+				case "$(dbox --cancel-label "Back" --menu "Volume Group Infomation:\n\nVolume Group Name: $vgselect Size: $(vgs --noheadings -o vg_size "$vgselect")\nFree: $(vgs --noheadings -o vg_free "$vgselect")\nUUID: $(vgs --noheadings -o vg_uuid "$vgselect")\nPhysical Volumes: $(append_comma "${pvofvg[*]}")\nLogical Volumes: $(append_comma "${lvofvg[*]}")\n\nSelect an option:" 0 80 0 \
 					"Manage PV" "Manage Physical Volume attached to this Volume Group" \
 					"Manage LV" "Manage Logical Volume on this Volume Group" \
 					"Rename" "Rename this Volume Group" \
-					"Remove" "Remove this Volume Group") || break
-
-				case "$vgoption" in
+					"Remove" "Remove this Volume Group")" in
 				"Manage PV") advcd_lvmpv ;;
 				"Manage LV") while true; do
 					lvlist=("")
@@ -408,7 +423,7 @@ advcd_lvm() {
 						lvlist+=("$lv" "$lvinfo")
 					done
 
-					lvselect=$(dbox --cancel-label "Back" --extra-button --extra-label "Remove" --ok-label "Rename" --menu "Select the physical volume to manage\n" 0 80 0 "${lvlist[@]}")
+					lvselect=$(dbox --cancel-label "Back" --extra-button --extra-label "Remove" --ok-label "Rename" --menu "Select the Physical Volume to manage\n" 0 80 0 "${lvlist[@]}")
 					case $? in
 					0) while true; do
 						newlvname=$(dbox --inputbox "Enter the new name for the logical partition" 0 0) || break
@@ -438,7 +453,7 @@ advcd_lvm() {
 					break
 				done ;;
 				"Rename") while true; do
-					newvgname=$(dbox --inputbox "Enter the new name for the volume group" 0 0) || break
+					newvgname=$(dbox --inputbox "Enter the new name for the Volume Group" 0 0) || break
 
 					if [ -z "$newvgname" ]; then
 						errbox "You didn't entered the new name!"
@@ -446,7 +461,7 @@ advcd_lvm() {
 					fi
 
 					if vgs --noheadings -o vg_name | grep -q "$newvgname"; then
-						errbox "The volume group $newvgname already exists!"
+						errbox "The Volume Group $newvgname already exists!"
 						continue
 					fi
 
@@ -475,25 +490,25 @@ advcd_lvm() {
 		2) return ;;
 		3)
 			listpvfree
-			pvselect=$(dbox --cancel-label "Back" --ok-label "Create" --checklist "Select the physical volumes to add to the volume group\n" 0 80 0 "${pvfreelist[@]}") || continue
-			newvgname=$(dbox --inputbox "Please enter the name of the new volume group" 0 0) || continue
+			pvselect=$(dbox --cancel-label "Back" --ok-label "Create" --checklist "Select the Physical Volumes to add to the Volume Group\n" 0 80 0 "${pvfreelist[@]}") || continue
+			newvgname=$(dbox --inputbox "Please enter the name of the new Volume Group" 0 0) || continue
 
 			if [ ! "$newvgname" ]; then
-				errbox "You didn't entered the name of the new volume group!"
+				errbox "You didn't entered the name of the new Volume Group!"
 				continue
 			fi
 
 			if vgs "$newvgname" >/dev/null 2>&1; then
-				errbox "The volume group $newvgname already exists!"
+				errbox "The Volume Group $newvgname already exists!"
 				continue
 			fi
 
 			if vgcreate "$newvgname" "$pvselect"; then
-				dbox --msgbox "Successfully created the volume group $newvgname"
+				msgbox "Successfully created the Volume Group $newvgname!"
 				return
 			fi
 
-			errbox "Could not create the volume group $newvgname!"
+			errbox "Could not create the Volume Group $newvgname!"
 			;;
 		esac
 	done
@@ -504,9 +519,9 @@ advcd_partopts() {
 		xtraopt=""
 		[[ "$devfstype" =~ "crypt".* ]] && xtraopt="\"Decrypt\" \"Mount Encrypted\""
 		[ "$devtype" == "disk" ] && xtraopt="\"Manage\" \"Manage Volumes/Partitions\""
-		[ "$devtype" == "lvm" ] || [[ "$devfstype" =~ "LVM".* ]] && xtraopt="\"Manage LVM\" \"Manage LVM physical volumes, logical volumes, and volume groups\""
+		[ "$devtype" == "lvm" ] || [[ "$devfstype" =~ "LVM".* ]] && xtraopt="\"Manage LVM\" \"Manage LVM Physical Volumes, logical volumes, and Volume Groups\""
 
-		case "$(dbox --cancel-label "Back" --menu "${devtype^^} $devdisk\nType: $devtype\n$dorpa\nSize: $(lsblk -d -n -r -o SIZE "$devdisk")\n\nChoose an action:" 0 0 0 \
+		case "$(dbox --cancel-label "Back" --menu "${devtype^^} $devdisk\nType: $devtype\n$dorpa\nSize: $(blk_d SIZE "$devdisk")\n\nChoose an action:" 0 0 0 \
 			"Mountpoint" "Use $dorpb as " \
 			"Format" "Change filesystem of $dorpb" \
 			$xtraopt \
@@ -548,21 +563,25 @@ advcd_partopts() {
 			return
 		done ;;
 		"Format") while true; do
+			largedatafs="Filesystem for storing and managing large volume of data provided by"
+			dataonlyfs="for storing data or installing ExtOS Frugal only"
+			fsrv="for server use"
 			xtrafs=""
-			[ "$(say "${MNT_LST[@]}" | grep "/boot" | awk '{print "$2"}')" ] && xtrafs="\"Encrypted\" \"Encrypted filesystem, secure your data (/boot or /boot/efi is required)\""
+			[ "$(say "${MNT_LST[@]}" | grep "/boot" | awk '{print "$2"}')" ] && xtrafs=("Encrypted" "Encrypted filesystem, secure your data (/boot or /boot/efi is required)")
 			fsformat=$(dbox --cancel-label "Back" --menu "Please select the filesystem to be formated on $devdisk" 0 0 0 \
 				"Ext2" "Standard Extended Filesystem for Linux version 2" \
 				"Ext3" "Ext2 with journaling" \
 				"Ext4" "Latest version of Extended Filesystem improved" \
-				"BTRFS" "Filesystem for storing and managing large volume of data provided by BtrFS" \
-				"XFS" "High-performance filesystem for server use" \
-				"JFS" "Journaled filesystem by IBM" \
-				"ZFS" "Filesystem for storing and managing large volume of data provided by OpenZFS" \
-				"FAT32" "Compatible, highly usable filesystem for storing data only (ExtOS Frugal installable)" \
-				"NTFS" "Standard Windows filesystem, use for data transfer only (ExtOS Frugal installable)" \
-				"F2FS" "Fast filesystem for storing data only (ExtOS Frugal installable)" \
-				"LVM" "Logical Volume Manager, useful if you want to have more partitions on disk that has 'msdos' partition table or when you have multiple disks (w or w/o RAID)" \
-				$xtrafs \
+				"BTRFS" "$largedatafs BtrFS" \
+				"XFS" "High-performance filesystem, $fsrv" \
+				"JFS" "Journaled filesystem by IBM, $fsrv" \
+				"ZFS" "$largedatafs OpenZFS, $fsrv" \
+				"FAT32" "Compatible, highly usable filesystem, $dataonlyfs" \
+				"EXFAT" "Extended FAT, $dataonlyfs" \
+				"NTFS" "Standard Windows filesystem, $dataonlyfs" \
+				"F2FS" "Fast filesystem used by Android data partition, $dataonlyfs" \
+				"LVM" "Logical Volume, for more partitions on 'msdos' partition table or group multiple drives (w or w/o RAID)" \
+				"${xtrafs[@]}" \
 				"Swap" "Virtual memory partition" \
 				"Unformated" "Empty/Wiped partition") || break
 
@@ -582,32 +601,26 @@ advcd_partopts() {
 			fi
 			case "$fsformat" in
 			Ext2 | Ext3 | Ext4) mkfs."${fsformat,,}" -F "$devdisk" ;;
+			BTRFS | JFS | NTFS | F2FS | EXFAT) mkfs."${fsformat,,}" "$devdisk" ;;
 			XFS) mkfs.xfs -f "$devdisk" ;;
-			BTRFS | JFS | NTFS | F2FS) m kfs."${fsformat,,}" "$devdisk" ;;
+			FAT32) mkfs.vfat -F 32 "$devdisk" ;;
+			LVM) pvcreate "$devdisk" ;;
 			ZFS)
 				zfs_id=$(randstr)
 				zpool create -f "$zfs_id" "$devdisk"
 				;;
-			FAT32) mkfs.vfat -F 32 "$devdisk" ;;
-			LVM) pvcreate "$devdisk" ;;
 			Encrypted) while true; do
-				ecryptpass=$(dbox --cancel-label "Back" --inputbox "Please enter the password for the encrypted filesystem" 0 0) || break
+				ecryptpass=$(pwdbox_c "Please enter the password for the encrypted filesystem" 0 0)
+				ecryptpass2=$(pwdbox '' "Please re-enter the password to confirm" 0 0)
+
 				if [ ! "$ecryptpass" ]; then
 					errbox "Password cannot be empty"
-					continue
-				fi
-				ecryptpass2=$(dbox --cancel-label "Back" --inputbox "Please re-enter the password to confirm" 0 0) || break
-
-				if [ ! "$ecryptpass2" ]; then
-					errbox "Password cannot be empty"
-					continue
-				fi
-				if [ "$ecryptpass" != "$ecryptpass2" ]; then
+				elif [ "$ecryptpass" != "$ecryptpass2" ]; then
 					errbox "Password does not match, please try again"
-					continue
+				else
+					say "$ecryptpass\n$ecryptpass" | cryptsetup luksFormat "$devdisk" &&
+					say "$ecryptpass" | cryptsetup open "$devdisk" "$(randstr)"
 				fi
-				saybr "$ecryptpass\n$ecryptpass" | cryptsetup luksFormat "$devdisk"
-				saybr "$ecryptpass" | cryptsetup open "$devdisk" "$(randstr)"
 			done ;;
 			Swap) mkswap "$devdisk" ;;
 			Unformated) wipefs -a "$devdisk" ;;
@@ -615,7 +628,7 @@ advcd_partopts() {
 			return
 		done ;;
 		"Decrypt") while true; do
-			cryptpass=$(dbox --inputbox "$devdisk appears to be an encrypted partition\nIt must be unlocked in order to continue\n\nPlease enter the encryption passphrase:" 0 0) || break
+			cryptpass=$(dbox --passwordbox --insecure "$devdisk appears to be an encrypted partition\nIt must be unlocked in order to continue\n\nPlease enter the encryption passphrase:" 0 0) || break
 
 			[ "$cryptpass" ] || errbox "You didn't entered the encryption passphrase!"
 			say "$cryptpass" | cryptsetup open "$devdisk" "$(randstr)" && return
@@ -634,19 +647,19 @@ advcd_diskman() {
 	while true; do
 		disklst
 		if [ ! "${devs[*]}" ]; then
-			dbox --msgbox "No device is available to install" 0 0
+			msgbox "No device is available to install"
 			return 1
 		fi
 		devdisk=$(dbox --cancel-label "Back" --ok-label "Select" --extra-button --extra-label "Next" --menu "Select the disk/partition for ExtOS to be installed on. Note that the disk/partition you select will be erased, but not until you have confirmed the changes.\n\nSelect the disk in the list below:" 0 80 0 "${devs[@]}")
 		case $? in
 		0)
-			devtype=$(lsblk -d -n -r -o TYPE "$devdisk")
-			devfstype=$(lsblk -d -n -r -o FSTYPE "$devdisk")
+			devtype=$(blk_d TYPE "$devdisk")
+			devfstype=$(blk_d FSTYPE "$devdisk")
 			if [ "$devtype" == "disk" ]; then
 				dorpa="Partition table: $(fdisk -l "$devdisk" | grep Disklabel | awk '{print "$3"}')"
 				dorpb="entire disk"
 			else
-				dorpa="Filesystem: $(lsblk -d -n -r -o FSTYPE "$devdisk")"
+				dorpa="Filesystem: $devfstype"
 				dorpb="this partition"
 			fi
 			advcd_partopts

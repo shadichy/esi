@@ -26,7 +26,8 @@ OS_STAT=""
 
 MNT_LST=("")
 
-sfs_srv="https://example.com"
+SFS_SRV=example.com
+URL=https://$SFS_SRV
 
 INIT_SYSTEM=loginctl
 pidof systemd && INIT_SYSTEM=systemctl
@@ -35,7 +36,8 @@ BIOSMODE="bios"
 [ -d /sys/firmware/efi ] && BIOSMODE="uefi"
 
 title=$TITLE
-say() { printf "%s" "$*"; }
+
+alias say=printf
 saybr() { say "$*\n"; }
 die() {
 	[ "$*" ] && saybr "ERROR: $*"
@@ -46,8 +48,20 @@ die() {
 dbox() { dialog --backtitle "$BACKTITLE" --title "$title" --stdout "$@"; }
 yesnobox() { dbox --yesno "$*" 0 0; }
 msgbox() { dbox --msgbox "$*" 0 0; }
+pwdbox() { dbox --clear --insecure "$1" --passwordbox "${*#"$1"}" 0 0; }
+pwdbox_c() { pwdbox "--nocancel" "$*"; }
+infobox() { dbox --infobox "$*" 0 0; }
 # warnbox() { msgbox "WARNING: $*"; }
 errbox() { msgbox "ERROR: $*"; }
+wraptt() {
+	local old_title=$title
+	title=$1
+	shift
+	"$@"
+	local code=$?
+	title=$old_title
+	return $code
+}
 
 init() {
 	case $(lscpu | grep Arch | awk '{print "$2"}') in

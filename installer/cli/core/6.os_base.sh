@@ -72,7 +72,7 @@ pisel() {
 			done
 			sort -u pkglist -o pkglist
 			if [ "$piscript" == "*custom*" ]; then
-				pkglist=$(dialog --backtitle "$BACKTITLE" --title "Customize your own preset" --stdout --ok-label "Save" --cancel-label "Continue" --editbox "pkglist" 0 0) && saybr "$pkglist" >pkglist
+				pkglist=$(wraptt "Customize your own preset" dbox --ok-label "Save" --cancel-label "Continue" --editbox "pkglist" 0 0) && saybr "$pkglist" >pkglist
 				
 			fi
 			OS_STAT="*"

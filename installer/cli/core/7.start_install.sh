@@ -5,24 +5,21 @@ mount_part() {
 }
 
 start_install() {
-	title="Partition the harddrive"
 	if [ ! "$PRT_STAT" ]; then
-		msgbox "You haven't selected the root partition yet."
+		wraptt "Partition the harddrive" msgbox "You haven't selected the root partition yet."
 		diskchoose
 		menusel
 		return
 	fi
 
-	title="OS selection"
 	if [ ! "$OS_STAT" ]; then
-		msgbox "You haven't selected the OS yet."
+		wraptt "OS selection" msgbox "You haven't selected the OS yet."
 		ossel
 		menusel
 		return
 	fi
 
-	title="Confirmation"
-	if ! yesnobox "You have selected these:\n\n\
+	if ! wraptt "Confirmation" yesnobox "You have selected these:\n\n\
 		Base: $os_base\n\
 		Init system: $initype\n\
 		Libc: $libctype\n\
@@ -36,7 +33,6 @@ start_install() {
 		return
 	fi
 
-	title=$TITLE
 	for p in "${MNT_LST[@]}"; do
 		mount_part "${p% *}" "${p# *}" && continue
 		errbox "Failed to mount the root partition!"
@@ -45,7 +41,7 @@ start_install() {
 		return
 	done
 
-	if ! curl -L -o /mnt/rootfs.sfs "$sfs_srv/root-$os_base-$initype-$libctype-$arct.sfs" || ! wget -O /mnt/rootfs.sfs "$sfs_srv/root-$os_base-$initype-$libctype-$arct.sfs"; then
+	if ! curl -L -o /mnt/rootfs.sfs "$URL/root-$os_base-$initype-$libctype-$arct.sfs" || ! wget -O /mnt/rootfs.sfs "$URL/root-$os_base-$initype-$libctype-$arct.sfs"; then
 		errbox "Failed to download the rootfs image!"
 		menusel
 		return
@@ -53,7 +49,7 @@ start_install() {
 
 	for pi in "${piscript[@]}"; do
 		[ "$pi" = "custom" ] && continue
-		if ! curl -L -o "/mnt/pi/$pi.sfs" "$sfs_srv/pi/$pi.sfs" && ! wget -O "/mnt/pi/$pi.sfs" "$sfs_srv/pi/$pi.sfs"; then
+		if ! curl -L -o "/mnt/pi/$pi.sfs" "$URL/pi/$pi.sfs" && ! wget -O "/mnt/pi/$pi.sfs" "$URL/pi/$pi.sfs"; then
 			errbox "Failed to download the $pi image!"
 			menusel
 			return
@@ -94,21 +90,21 @@ start_install() {
 			fi
 		fi
 	else
-		if ! curl -L -o /mnt/data.img "$sfs_srv/data-$arct.img" && ! wget -O /mnt/data.img "$sfs_srv/data-$arct.img"; then
+		if ! curl -L -o /mnt/data.img "$URL/data-$arct.img" && ! wget -O /mnt/data.img "$URL/data-$arct.img"; then
 			errbox "Failed to download the data.img image!"
 			menusel
 			return
 		fi
 		external_data=$(printf '%s\n' "${MNT_LST[@]}" | grep -w "/data")
-		if [ -n "$external_data" ]; then
+		if [ "$external_data" ]; then
 			external_data_dev=$(echo "$external_data" | awk '{print "$1"}')
 			dd if=/mnt/data.img of="$external_data_dev" bs=4M
 			sed -i "s/data=\/cdrom\/data.img/data=$external_data_dev/g" /mnt/boot/grub/grub.cfg
 		fi
 		cp -r "preset/0-global/$arct/boot" /mnt/boot
-		if dialog --backtitle "$BACKTITLE" --title "Overlay" --yesno "Do you want to enable overlay?"; then
+		if wraptt "Overlay" yesnobox "Do you want to enable overlay?"; then
 			external_overlay=$(printf '%s\n' "${MNT_LST[@]}" | grep -w "/overlay")
-			if [ -n "$external_overlay" ]; then
+			if [ "$external_overlay" ]; then
 				overlay_dev=$(echo "$external_overlay" | awk '{print "$1"}')
 			else
 				overlay_dev=/mnt/overlay.img
@@ -129,8 +125,7 @@ start_install() {
 	# is it finished?
 	# no u fcking idiot, there are lots of things to do here
 	INS_STAT="*"
-	title="Finished"
-	dbox --extra-button --extra-label "Other" --yesno "Do you want to reboot?"
+	wraptt "Finished" dbox --extra-button --extra-label "Other" --yesno "Do you want to reboot?"
 	case $? in
 	0) reboot ;;
 	1) menusel ;;

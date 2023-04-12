@@ -21,12 +21,12 @@ usrname() {
 
 			usrpswd_match=false
 			while ! "$usrpswd_match"; do
-				input=$(dbox --clear --nocancel --insecure --passwordbox "Note: the default password of '$USER_NAME' is 'extos'\n\nCreate a new password for '$USER_NAME':" 0 0 "extos")
+				input=$(pwdbox_c "Note: the default password of '$USER_NAME' is 'extos'\n\nCreate a new password for '$USER_NAME':" 0 0 "extos")
 
 				if [ "$input" == extos ]; then
 					confirm_input=extos
 				else
-					confirm_input=$(dbox --clear --insecure --passwordbox "Re-enter password to verify:" 0 0)
+					confirm_input=$(pwdbox '' "Re-enter password to verify:" 0 0)
 				fi
 
 				if [ ! "$input" ]; then
@@ -41,15 +41,15 @@ usrname() {
 			break
 		done
 
-		if dbox --clear --nocancel --yesno "Do you want to set a password for 'root' (root is the Super User, the Administaion of the system, who grants permissions for you to do system jobs)?"; then
+		if yesnobox "Do you want to set a password for 'root' (root is the Super User, the Administaion of the system, who grants permissions for you to do system jobs)?"; then
 			supswd_match=false
 			while ! "$supswd_match"; do
-				input=$(dbox --clear --nocancel --insecure --passwordbox "Note: the default is 'root'\n\nEnter root password:" 0 0 "root")
+				input=$(pwdbox_c "Note: the default is 'root'\n\nEnter root password:" 0 0 "root")
 
 				if [ "$input" == root ]; then
 					confirm_input=root
 				else
-					confirm_input=$(dbox --clear --insecure --passwordbox "Re-enter password to verify:" 0 0)
+					confirm_input=$(pwdbox '' "Re-enter password to verify:" 0 0)
 				fi
 
 				if [ -z "$input" ]; then
